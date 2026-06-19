@@ -82,8 +82,9 @@ pub trait Transport: Send {
 
 用 `--command` 走 stdio，用 `--url` 走 HTTP。新增传输只需实现 `Transport`，gateway 逻辑不变。
 
-> HTTP 限制（MVP）：目前仅通过 POST 响应接收上游消息，未单独维持 GET SSE 长连接，
-> 因此上游主动发起的请求（如 sampling）暂不支持。
+HTTP 上游除了处理 POST 响应（JSON / SSE），在会话建立后还会维持一条 GET SSE 长连接，
+用于接收上游**主动发起**的消息（sampling/elicitation 请求、进度与资源更新通知等）并透传给客户端；
+上游不支持 GET SSE（返回 405 等）时自动跳过，不影响 POST 流程。
 
 ## 6. 多 Server 聚合
 

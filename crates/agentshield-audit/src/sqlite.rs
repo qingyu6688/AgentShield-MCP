@@ -6,16 +6,22 @@
 use std::path::Path;
 use std::sync::Mutex;
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, params_from_iter, Connection};
 
 use crate::error::Result;
 use crate::AuditRecord;
 
-/// 审计事件查询条件。
+/// 审计事件查询条件。各字段是 AND 关系，None 表示不限。
 #[derive(Debug, Default, Clone)]
 pub struct EventQuery {
     /// 按风险等级过滤（low / medium / high / critical），大小写不敏感
     pub level: Option<String>,
+    /// 按来源 MCP server 名过滤
+    pub server: Option<String>,
+    /// 起始时间下界（含），RFC3339 文本
+    pub since: Option<String>,
+    /// 结束时间上界（含），RFC3339 文本
+    pub until: Option<String>,
     /// 最多返回多少条；None 表示不限
     pub limit: Option<usize>,
 }
@@ -119,14 +125,35 @@ impl SqliteStore {
 
     /// 按条件查询事件，按时间倒序（最新在前）。
     pub fn query(&self, q: &EventQuery) -> Result<Vec<AuditRecord>> {
+        // 动态拼接 WHERE 条件，参数按出现顺序绑定
+        let mut conds: Vec<&str> = Vec::new();
+        let mut vals: Vec<String> = Vec::new();
+        if let Some(l) = &q.level {
+            conds.push("risk_level = ? COLLATE NOCASE");
+            vals.push(l.clone());
+        }
+        if let Some(s) = &q.server {
+            conds.push("server_name = ?");
+            vals.push(s.clone());
+        }
+        if let Some(s) = &q.since {
+            conds.push("created_at >= ?");
+            vals.push(s.clone());
+        }
+        if let Some(u) = &q.until {
+            conds.push("created_at <= ?");
+            vals.push(u.clone());
+        }
+
         let mut sql = String::from(
             r#"SELECT id, session_id, client_name, server_name, event_type, tool_name,
                       target, arguments_json, result_json, risk_score, risk_level,
                       decision, reason, created_at
                FROM security_events"#,
         );
-        if q.level.is_some() {
-            sql.push_str(" WHERE risk_level = ?1 COLLATE NOCASE");
+        if !conds.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&conds.join(" AND "));
         }
         sql.push_str(" ORDER BY created_at DESC");
         if let Some(n) = q.limit {
@@ -156,13 +183,9 @@ impl SqliteStore {
             })
         };
 
-        let rows = if let Some(level) = &q.level {
-            stmt.query_map(params![level], map_row)?
-                .collect::<rusqlite::Result<Vec<_>>>()?
-        } else {
-            stmt.query_map([], map_row)?
-                .collect::<rusqlite::Result<Vec<_>>>()?
-        };
+        let rows = stmt
+            .query_map(params_from_iter(vals.iter()), map_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
 
@@ -224,7 +247,7 @@ mod tests {
         let crit = store
             .query(&EventQuery {
                 level: Some("critical".into()),
-                limit: None,
+                ..Default::default()
             })
             .unwrap();
         assert_eq!(crit.len(), 1);
@@ -243,10 +266,51 @@ mod tests {
         }
         let some = store
             .query(&EventQuery {
-                level: None,
                 limit: Some(3),
+                ..Default::default()
             })
             .unwrap();
         assert_eq!(some.len(), 3);
+    }
+
+    #[test]
+    fn filters_by_server_and_time_range() {
+        let store = SqliteStore::open(":memory:").unwrap();
+        // rec() 里 server_name 固定为 "srv"，created_at 为当前时间
+        store
+            .insert(&rec("./.env", RiskLevel::Critical, Action::Block))
+            .unwrap();
+
+        let by_server = |s: &str| {
+            store
+                .query(&EventQuery {
+                    server: Some(s.into()),
+                    ..Default::default()
+                })
+                .unwrap()
+                .len()
+        };
+        assert_eq!(by_server("srv"), 1);
+        assert_eq!(by_server("nope"), 0);
+
+        let since = |t: &str| {
+            store
+                .query(&EventQuery {
+                    since: Some(t.into()),
+                    ..Default::default()
+                })
+                .unwrap()
+                .len()
+        };
+        assert_eq!(since("2000-01-01T00:00:00+00:00"), 1); // 过去下界，包含
+        assert_eq!(since("2999-01-01T00:00:00+00:00"), 0); // 未来下界，排除
+
+        let until_past = store
+            .query(&EventQuery {
+                until: Some("2000-01-01T00:00:00+00:00".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(until_past.len(), 0); // 过去上界，排除
     }
 }

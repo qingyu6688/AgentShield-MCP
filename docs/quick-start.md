@@ -115,8 +115,10 @@ agentshield proxy start --server filesystem
 ## 6. 查看审计与报告
 
 ```bash
-agentshield audit list                    # 看最近的事件
-agentshield audit list --level critical   # 只看高危
+agentshield audit list                       # 看最近的事件
+agentshield audit list --level critical      # 只看高危
+agentshield audit list --server filesystem   # 只看某个 server
+agentshield audit list --since 2026-06-19 --until 2026-06-20   # 按时间范围
 agentshield report generate --format markdown -o report.md
 ```
 

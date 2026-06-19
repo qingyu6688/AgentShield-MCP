@@ -8,9 +8,11 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::io::{self, BufRead, Write};
-use std::sync::mpsc::{self, Receiver};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::Mutex;
 use std::thread;
+use std::time::Duration;
 
 use agentshield_core::{ids, Action, Decision, ToolCall};
 
@@ -69,20 +71,39 @@ pub fn run(
     // 客户端 stdout 被主线程（拦截响应）与消费线程（上游响应）共享。
     let client_out = Mutex::new(io::stdout());
     let pending: Mutex<PendingMap> = Mutex::new(HashMap::new());
+    // 停止标志：HTTP 的 GET 监听线程是 detached 且持有 channel 发送端，
+    // 不能再靠 channel 关闭来结束消费线程，改用标志收尾。
+    let stop = AtomicBool::new(false);
 
     thread::scope(|s| -> io::Result<()> {
         let co = &client_out;
         let pend = &pending;
         let aud = audit;
+        let stop_ref = &stop;
         // 消费线程：上游消息 → 客户端 + 回填审计
         s.spawn(move || {
-            for line in rx.iter() {
+            let deliver = |line: &str| {
                 if let Ok(mut w) = co.lock() {
                     let _ = w.write_all(line.as_bytes());
                     let _ = w.write_all(b"\n");
                     let _ = w.flush();
                 }
-                backfill(&line, pend, aud);
+                backfill(line, pend, aud);
+            };
+            loop {
+                match rx.recv_timeout(Duration::from_millis(150)) {
+                    Ok(line) => deliver(&line),
+                    Err(RecvTimeoutError::Timeout) => {
+                        if stop_ref.load(Ordering::Relaxed) {
+                            break;
+                        }
+                    }
+                    Err(RecvTimeoutError::Disconnected) => break,
+                }
+            }
+            // 退出前把已到达但未处理的消息清空
+            while let Ok(line) = rx.try_recv() {
+                deliver(&line);
             }
         });
 
@@ -120,8 +141,9 @@ pub fn run(
             }
         }
 
-        // 关闭上游并释放 channel 发送端，消费线程随之结束（scope 会 join）
+        // 关闭上游并通知消费线程收尾（scope 会 join 消费线程）
         transport.close();
+        stop.store(true, Ordering::Relaxed);
         Ok(())
     })?;
 

@@ -145,6 +145,15 @@ enum AuditAction {
         /// 只看某风险等级：low / medium / high / critical
         #[arg(long)]
         level: Option<String>,
+        /// 只看某来源 MCP server
+        #[arg(long)]
+        server: Option<String>,
+        /// 起始时间（含），YYYY-MM-DD 或 RFC3339
+        #[arg(long)]
+        since: Option<String>,
+        /// 结束时间（含），YYYY-MM-DD 或 RFC3339
+        #[arg(long)]
+        until: Option<String>,
         /// 最多显示多少条
         #[arg(long, default_value_t = 20)]
         limit: usize,
@@ -201,7 +210,13 @@ fn main() -> anyhow::Result<()> {
             } => run_proxy(server, command, args, url, client)?,
         },
         Command::Audit { action } => match action {
-            AuditAction::List { level, limit } => run_audit_list(level, limit)?,
+            AuditAction::List {
+                level,
+                server,
+                since,
+                until,
+                limit,
+            } => run_audit_list(level, server, since, until, limit)?,
         },
         Command::Report { action } => match action {
             ReportAction::Generate { format, output } => run_report_generate(&format, output)?,
@@ -429,12 +444,21 @@ fn run_proxy(
 
 // ---------------- audit list ----------------
 
-fn run_audit_list(level: Option<String>, limit: usize) -> anyhow::Result<()> {
+fn run_audit_list(
+    level: Option<String>,
+    server: Option<String>,
+    since: Option<String>,
+    until: Option<String>,
+    limit: usize,
+) -> anyhow::Result<()> {
     let store =
         SqliteStore::open(audit_db_path()).map_err(|e| anyhow::anyhow!("打开审计库失败：{e}"))?;
     let records = store
         .query(&EventQuery {
             level,
+            server,
+            since: since.map(|s| parse_time_bound(&s, false)).transpose()?,
+            until: until.map(|s| parse_time_bound(&s, true)).transpose()?,
             limit: Some(limit),
         })
         .map_err(|e| anyhow::anyhow!("查询审计失败：{e}"))?;
@@ -497,6 +521,28 @@ fn run_report_generate(format: &str, output: Option<PathBuf>) -> anyhow::Result<
 /// 当前本地时间，形如 2026-06-19 22:31。
 fn now_string() -> String {
     chrono::Local::now().format("%Y-%m-%d %H:%M").to_string()
+}
+
+/// 把用户输入的时间解析成可与审计 created_at（RFC3339 UTC）比较的边界字符串。
+///
+/// 支持 `YYYY-MM-DD`（按 UTC 整天处理：起始取 00:00:00、结束取 23:59:59）
+/// 与完整 RFC3339。审计时间以 UTC 存储，故这里按 UTC 解释日期。
+fn parse_time_bound(s: &str, end_of_day: bool) -> anyhow::Result<String> {
+    use chrono::{NaiveDate, NaiveTime, TimeZone, Utc};
+
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+        return Ok(dt.with_timezone(&Utc).to_rfc3339());
+    }
+    if let Ok(date) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        let time = if end_of_day {
+            NaiveTime::from_hms_opt(23, 59, 59).unwrap()
+        } else {
+            NaiveTime::from_hms_opt(0, 0, 0).unwrap()
+        };
+        let dt = Utc.from_utc_datetime(&date.and_time(time));
+        return Ok(dt.to_rfc3339());
+    }
+    anyhow::bail!("无法解析时间 `{s}`，请用 YYYY-MM-DD 或 RFC3339")
 }
 
 // ---------------- memory list ----------------

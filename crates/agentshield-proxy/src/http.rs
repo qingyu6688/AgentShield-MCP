@@ -7,11 +7,17 @@
 //!
 //! 会话 id 从 initialize 响应的 `Mcp-Session-Id` 头捕获，后续请求带回。
 //!
-//! 限制（MVP）：仅通过 POST 响应接收上游消息，未单独维持 GET SSE 长连接，
-//! 因此上游主动发起的请求（如 sampling）暂不支持，见 docs/design/02-proxy.md。
+//! 会话建立后另开一个 GET SSE 长连接，用于接收上游**主动发起**的消息
+//! （sampling / elicitation 请求、进度与资源更新通知等），推回给客户端。
+//!
+//! 关闭说明：GET 监听线程阻塞在读取上，`close()` 只置停止标志、释放 channel
+//! 发送端；该线程会在上游关闭连接或进程退出时结束，不阻塞 gateway 收尾。
 
 use std::io::{self, BufRead, BufReader};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
+use std::sync::Arc;
+use std::thread;
 
 use crate::transport::Transport;
 
@@ -21,6 +27,8 @@ pub struct HttpTransport {
     agent: ureq::Agent,
     session_id: Option<String>,
     tx: Option<Sender<String>>,
+    listener_started: bool,
+    running: Arc<AtomicBool>,
 }
 
 impl HttpTransport {
@@ -30,6 +38,8 @@ impl HttpTransport {
             agent: ureq::AgentBuilder::new().build(),
             session_id: None,
             tx: Some(tx),
+            listener_started: false,
+            running: Arc::new(AtomicBool::new(true)),
         }
     }
 
@@ -40,6 +50,43 @@ impl HttpTransport {
         if let Some(tx) = &self.tx {
             let _ = tx.send(line);
         }
+    }
+
+    /// 开启 GET SSE 长连接监听上游主动发起的消息（只开一次）。
+    fn start_listener(&mut self) {
+        if self.listener_started {
+            return;
+        }
+        self.listener_started = true;
+
+        let tx = match &self.tx {
+            Some(t) => t.clone(),
+            None => return,
+        };
+        let url = self.url.clone();
+        let agent = self.agent.clone();
+        let sid = self.session_id.clone();
+        let running = Arc::clone(&self.running);
+
+        thread::spawn(move || {
+            let mut req = agent.get(&url).set("Accept", "text/event-stream");
+            if let Some(s) = &sid {
+                req = req.set("Mcp-Session-Id", s);
+            }
+            // 上游不支持 GET SSE（如返回 405）时直接放弃，不影响 POST 流程
+            let resp = match req.call() {
+                Ok(r) => r,
+                Err(_) => return,
+            };
+            let ctype = resp.header("Content-Type").unwrap_or("").to_lowercase();
+            if !ctype.contains("text/event-stream") {
+                return;
+            }
+            let reader = BufReader::new(resp.into_reader());
+            pump_sse(reader, Some(&running), |m| {
+                let _ = tx.send(m);
+            });
+        });
     }
 }
 
@@ -72,34 +119,10 @@ impl Transport for HttpTransport {
         let ctype = resp.header("Content-Type").unwrap_or("").to_lowercase();
 
         if status == 202 {
-            return Ok(()); // 无 body
-        }
-
-        if ctype.contains("text/event-stream") {
-            // 解析 SSE：累积 data: 行，遇空行成一条消息，边解析边推送
+            // 无 body
+        } else if ctype.contains("text/event-stream") {
             let reader = BufReader::new(resp.into_reader());
-            let mut data = String::new();
-            for l in reader.lines() {
-                let l = match l {
-                    Ok(l) => l,
-                    Err(_) => break,
-                };
-                if l.is_empty() {
-                    if !data.is_empty() {
-                        self.push(std::mem::take(&mut data));
-                    }
-                } else if let Some(rest) = l.strip_prefix("data:") {
-                    let rest = rest.strip_prefix(' ').unwrap_or(rest);
-                    if !data.is_empty() {
-                        data.push('\n');
-                    }
-                    data.push_str(rest);
-                }
-                // event: / id: / retry: 等字段忽略
-            }
-            if !data.is_empty() {
-                self.push(data);
-            }
+            pump_sse(reader, None, |m| self.push(m));
         } else {
             // application/json 或其它：整个 body 视为一条消息
             let body = resp
@@ -108,11 +131,46 @@ impl Transport for HttpTransport {
             self.push(body.trim().to_string());
         }
 
+        // 首次往返后（已可能拿到会话 id）开启 GET 监听
+        self.start_listener();
         Ok(())
     }
 
     fn close(&mut self) {
-        // 丢弃发送端，让 gateway 的消费线程在 channel 关闭后结束
+        self.running.store(false, Ordering::Relaxed);
+        // 丢弃发送端；GET 监听线程的克隆会在其结束时释放
         self.tx.take();
+    }
+}
+
+/// 解析 SSE 流：累积 `data:` 行，遇空行成一条消息并通过 `emit` 推出。
+/// `running` 为 `Some` 时，每读到一行检查是否应停止。
+fn pump_sse(reader: impl BufRead, running: Option<&AtomicBool>, mut emit: impl FnMut(String)) {
+    let mut data = String::new();
+    for l in reader.lines() {
+        if let Some(r) = running {
+            if !r.load(Ordering::Relaxed) {
+                break;
+            }
+        }
+        let l = match l {
+            Ok(l) => l,
+            Err(_) => break,
+        };
+        if l.is_empty() {
+            if !data.is_empty() {
+                emit(std::mem::take(&mut data));
+            }
+        } else if let Some(rest) = l.strip_prefix("data:") {
+            let rest = rest.strip_prefix(' ').unwrap_or(rest);
+            if !data.is_empty() {
+                data.push('\n');
+            }
+            data.push_str(rest);
+        }
+        // event: / id: / retry: 等字段忽略
+    }
+    if !data.is_empty() {
+        emit(data);
     }
 }
