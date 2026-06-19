@@ -1,0 +1,67 @@
+# AgentShield 团队 / 企业策略
+# 思路：默认记录，敏感资源与破坏性操作严格管控。
+# 配合 config.yaml 里各 MCP server 的 trust_level 与白 / 黑名单一起使用，
+# server 权限等级先于规则生效（见 docs/policy.md 第 6 节）。
+
+version: 1
+
+default_action: log
+
+rules:
+  # ---------- 密钥与凭据：始终阻止 ----------
+  - name: block-secrets
+    description: 阻止访问任何密钥 / 凭据文件
+    match:
+      path:
+        regex: "(^|[/\\\\])\\.env|id_rsa|id_ed25519|\\.pem$|credentials$|\\.netrc$"
+    action: block
+    severity: critical
+
+  # ---------- 基础设施配置：确认 ----------
+  - name: confirm-infra-config
+    description: 修改基础设施 / 部署配置需确认
+    match:
+      type: file.write
+      path:
+        regex: "docker-compose\\.ya?ml$|nginx\\.conf$|application\\.ya?ml$|\\.tf$"
+    action: confirm
+    severity: high
+
+  # ---------- 远程脚本：阻止 ----------
+  - name: block-curl-bash
+    description: 阻止远程脚本管道执行
+    match:
+      type: shell.exec
+      command:
+        regex: "curl.*\\|\\s*(bash|sh)|wget.*\\|\\s*(bash|sh)"
+    action: block
+    severity: critical
+
+  # ---------- 容器 / 编排删除：确认 ----------
+  - name: confirm-infra-delete
+    description: 删除容器 / 数据卷 / K8s 资源需确认
+    match:
+      type: shell.exec
+      command:
+        regex: "docker\\s+(rm|volume\\s+rm)|kubectl\\s+delete"
+    action: confirm
+    severity: high
+
+  # ---------- 数据库破坏性操作：阻止 ----------
+  - name: block-destructive-sql
+    description: 阻止删除数据库 / 表 / 清空表
+    match:
+      type: db.query
+      sql:
+        regex: "(?i)drop\\s+(database|table)|truncate\\s+table"
+    action: block
+    severity: critical
+
+  - name: confirm-bulk-sql
+    description: 无 WHERE 的批量更新建议确认（粗匹配，精确判断由风险引擎补充）
+    match:
+      type: db.query
+      sql:
+        regex: "(?i)delete\\s+from|update\\s+.+\\s+set"
+    action: confirm
+    severity: high

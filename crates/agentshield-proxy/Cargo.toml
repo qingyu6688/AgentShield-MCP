@@ -1,0 +1,20 @@
+[package]
+name = "agentshield-proxy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "AgentShield MCP 代理：协议解析、工具调用分类与拦截"
+
+# 说明：MVP 实现 JSON-RPC 解析与调用分类（classify）。stdio 传输主循环与
+# 真实 server 连接在接入阶段补齐，见 docs/design/02-proxy.md。
+[dependencies]
+agentshield-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+regex.workspace = true
+once_cell.workspace = true
+thiserror.workspace = true

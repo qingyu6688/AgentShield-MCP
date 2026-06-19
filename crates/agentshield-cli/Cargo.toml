@@ -1,0 +1,27 @@
+[package]
+name = "agentshield-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "AgentShield MCP 命令行工具"
+
+[[bin]]
+name = "agentshield"
+path = "src/main.rs"
+
+[dependencies]
+agentshield-core.workspace = true
+agentshield-rules.workspace = true
+agentshield-risk.workspace = true
+agentshield-policy.workspace = true
+agentshield-audit.workspace = true
+agentshield-proxy.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true

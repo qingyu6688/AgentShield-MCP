@@ -1,0 +1,20 @@
+[package]
+name = "agentshield-policy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "AgentShield MCP 策略引擎（YAML 规则匹配与决策合成）"
+
+[dependencies]
+agentshield-core.workspace = true
+serde.workspace = true
+serde_yaml.workspace = true
+regex.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+chrono.workspace = true

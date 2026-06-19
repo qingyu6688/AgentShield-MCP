@@ -1,0 +1,45 @@
+# AgentShield 严格策略
+# 在默认策略基础上收紧：所有写 / 删 / 执行 / 数据库操作都要求确认，
+# 敏感文件与远程脚本直接阻止。适合对生产环境或重要项目使用。
+
+version: 1
+
+default_action: confirm
+
+rules:
+  # 敏感文件一律阻止（读写都拦）
+  - name: block-secrets
+    description: 阻止访问任何密钥 / 凭据文件
+    match:
+      path:
+        regex: "(^|[/\\\\])\\.env|id_rsa|id_ed25519|\\.pem$"
+    action: block
+    severity: critical
+
+  # 远程脚本执行阻止
+  - name: block-curl-bash
+    description: 阻止远程脚本管道执行
+    match:
+      type: shell.exec
+      command:
+        regex: "curl.*\\|\\s*(bash|sh)|wget.*\\|\\s*(bash|sh)"
+    action: block
+    severity: critical
+
+  # 破坏性数据库操作阻止
+  - name: block-destructive-sql
+    description: 阻止删除数据库 / 表 / 清空表
+    match:
+      type: db.query
+      sql:
+        regex: "(?i)drop\\s+(database|table)|truncate\\s+table"
+    action: block
+    severity: critical
+
+  # 其余写 / 删 / 执行落到 default_action: confirm
+  - name: log-read
+    description: 普通读取放行但记录
+    match:
+      type: file.read
+    action: log
+    severity: low

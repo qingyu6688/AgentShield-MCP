@@ -1,0 +1,51 @@
+# AgentShield 只读策略
+# AI 只能看，不能改：一切写 / 删 / 执行 / 数据库变更都阻止。
+
+version: 1
+
+default_action: log
+
+rules:
+  - name: block-file-write
+    description: 禁止写入文件
+    match:
+      type: file.write
+    action: block
+    severity: high
+
+  - name: block-file-delete
+    description: 禁止删除文件
+    match:
+      type: file.delete
+    action: block
+    severity: high
+
+  - name: block-file-rename
+    description: 禁止重命名 / 移动文件
+    match:
+      type: file.rename
+    action: block
+    severity: high
+
+  - name: block-shell
+    description: 禁止执行命令
+    match:
+      type: shell.exec
+    action: block
+    severity: high
+
+  - name: block-db
+    description: 禁止数据库操作
+    match:
+      type: db.query
+    action: block
+    severity: high
+
+  - name: block-env-read
+    description: 即使只读，也阻止读取敏感文件
+    match:
+      type: file.read
+      path:
+        contains: [".env", "id_rsa", "id_ed25519", ".pem"]
+    action: block
+    severity: critical

@@ -1,0 +1,91 @@
+# AgentShield 默认策略
+# 安全与可用的平衡：敏感文件与远程脚本直接拦截，破坏性操作要求确认。
+# 语法说明见 docs/policy.md。
+
+version: 1
+
+# 没有任何规则命中时的兜底动作
+default_action: log
+
+rules:
+  # ---------- 文件 ----------
+  - name: block-env-read
+    description: 阻止读取环境变量文件，防止密钥泄露
+    match:
+      type: file.read
+      path:
+        contains: [".env", ".env.local", ".env.production"]
+    action: block
+    severity: critical
+
+  - name: block-ssh-key
+    description: 阻止访问 SSH 私钥
+    match:
+      path:
+        regex: "(^|[/\\\\])(id_rsa|id_ed25519)$"
+    action: block
+    severity: critical
+
+  - name: block-pem
+    description: 阻止访问证书 / 私钥文件
+    match:
+      path:
+        regex: "\\.pem$"
+    action: block
+    severity: critical
+
+  - name: confirm-compose
+    description: 修改 Docker 编排文件需确认
+    match:
+      type: file.write
+      path:
+        contains: ["docker-compose.yml", "docker-compose.yaml"]
+    action: confirm
+    severity: high
+
+  # ---------- Shell ----------
+  - name: block-curl-bash
+    description: 阻止下载远程脚本并管道进 shell
+    match:
+      type: shell.exec
+      command:
+        regex: "curl.*\\|\\s*(bash|sh)|wget.*\\|\\s*(bash|sh)"
+    action: block
+    severity: critical
+
+  - name: confirm-recursive-delete
+    description: 递归删除需确认
+    match:
+      type: shell.exec
+      command:
+        regex: "rm\\s+-[a-z]*r[a-z]*f|rmdir\\s+/s"
+    action: confirm
+    severity: high
+
+  - name: confirm-force-push
+    description: 强制推送会覆盖远端历史，需确认
+    match:
+      type: shell.exec
+      command:
+        regex: "git\\s+push\\s+.*--force|git\\s+push\\s+-f\\b"
+    action: confirm
+    severity: high
+
+  # ---------- 数据库 ----------
+  - name: block-drop-database
+    description: 阻止删除整个数据库
+    match:
+      type: db.query
+      sql:
+        regex: "(?i)drop\\s+database"
+    action: block
+    severity: critical
+
+  - name: confirm-drop-table
+    description: 删除数据表需确认
+    match:
+      type: db.query
+      sql:
+        regex: "(?i)drop\\s+table|truncate\\s+table"
+    action: confirm
+    severity: critical

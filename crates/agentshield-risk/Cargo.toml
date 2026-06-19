@@ -1,0 +1,17 @@
+[package]
+name = "agentshield-risk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "AgentShield MCP 风险评分引擎"
+
+[dependencies]
+agentshield-core.workspace = true
+agentshield-rules.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+chrono.workspace = true

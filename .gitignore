@@ -1,0 +1,28 @@
+# Rust
+/target
+**/*.rs.bk
+# 说明：本仓库含二进制 crate，按惯例提交 Cargo.lock 以锁定可复现的构建，故不忽略
+
+# AgentShield 运行时产物
+.agentshield/
+*.db
+*.db-journal
+*.jsonl
+
+# 环境与密钥
+.env
+.env.*
+*.pem
+id_rsa
+id_ed25519
+
+# 桌面端（v0.3+）
+desktop/node_modules/
+desktop/dist/
+desktop/src-tauri/target/
+
+# 编辑器 / 系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
