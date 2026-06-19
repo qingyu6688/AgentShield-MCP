@@ -16,6 +16,8 @@
 - 确认结果持久化：选「始终允许 / 永久拉黑」会写入 `.agentshield/decisions.json`，
   下次同一操作（按 server + 工具 + 规范化目标匹配）直接放行 / 拦截，记忆优先于策略；
   新增 `memory list` 查看
+- 上游传输抽象为 `Transport`：除 stdio 子进程外，新增 Streamable HTTP 上游
+  （POST + JSON/SSE 响应、自动捕获并复用会话 id）；`mcp add` / `proxy start` 支持 `--url`
 - `init` / `mcp add` / `mcp list` / `audit list`（按等级过滤、读 SQLite）命令落地
 - 终端确认走控制台设备（`/dev/tty`、`CONIN$/CONOUT$`），不污染 MCP 通道
 - 内置风险规则与风险评分引擎
@@ -25,7 +27,7 @@
 ### 待办
 
 - 审计按时间范围 / server 维度查询
-- MCP SSE / Streamable HTTP 传输
+- HTTP 上游维持 GET SSE 长连接（支持上游主动发起的请求，如 sampling）
 - Tauri 桌面端
 
 ## [0.0.0] - 2026-06-19

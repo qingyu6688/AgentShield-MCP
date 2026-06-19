@@ -13,7 +13,7 @@ use memory::DecisionMemory;
 use agentshield_audit::{EventQuery, Format, Report, ReportMeta, SqliteStore};
 use agentshield_core::{ids, Config, ServerConfig};
 use agentshield_policy::PolicyEngine;
-use agentshield_proxy::{classify, DecisionMaker, ProxyContext};
+use agentshield_proxy::{classify, connect_http, connect_stdio, run, DecisionMaker, ProxyContext};
 use approver::{CliApprover, FallbackAction};
 use clap::{Parser, Subcommand};
 use wiring::{AppDecisionMaker, DualAudit};
@@ -100,10 +100,14 @@ enum McpAction {
     /// 添加一个 MCP Server
     Add {
         name: String,
-        #[arg(long)]
+        /// stdio 上游命令（与 --url 二选一）
+        #[arg(long, default_value = "")]
         command: String,
         #[arg(long, value_delimiter = ',', allow_hyphen_values = true)]
         args: Vec<String>,
+        /// Streamable HTTP 上游地址（设置后走 HTTP 传输）
+        #[arg(long)]
+        url: Option<String>,
         /// 信任等级 0-5
         #[arg(long, default_value_t = 2)]
         trust: u8,
@@ -114,17 +118,20 @@ enum McpAction {
 
 #[derive(Subcommand)]
 enum ProxyAction {
-    /// 启动代理。指定 --server 从配置读取，或用 --command 直接指定上游。
+    /// 启动代理。指定 --server 从配置读取，或用 --command / --url 直接指定上游。
     Start {
         /// 已在 config.yaml 注册的 server 名
         #[arg(long)]
         server: Option<String>,
-        /// 直接指定上游命令（绕过配置，便于快速测试）
+        /// 直接指定 stdio 上游命令（绕过配置，便于快速测试）
         #[arg(long)]
         command: Option<String>,
         /// 上游命令参数，逗号分隔
         #[arg(long, value_delimiter = ',', allow_hyphen_values = true)]
         args: Vec<String>,
+        /// 直接指定 Streamable HTTP 上游地址
+        #[arg(long)]
+        url: Option<String>,
         /// 客户端标识，仅用于审计展示
         #[arg(long, default_value = "AI Client")]
         client: String,
@@ -179,8 +186,9 @@ fn main() -> anyhow::Result<()> {
                 name,
                 command,
                 args,
+                url,
                 trust,
-            } => run_mcp_add(name, command, args, trust)?,
+            } => run_mcp_add(name, command, args, url, trust)?,
             McpAction::List => run_mcp_list()?,
         },
         Command::Proxy { action } => match action {
@@ -188,8 +196,9 @@ fn main() -> anyhow::Result<()> {
                 server,
                 command,
                 args,
+                url,
                 client,
-            } => run_proxy(server, command, args, client)?,
+            } => run_proxy(server, command, args, url, client)?,
         },
         Command::Audit { action } => match action {
             AuditAction::List { level, limit } => run_audit_list(level, limit)?,
@@ -270,15 +279,25 @@ fn save_config(cfg: &Config) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_mcp_add(name: String, command: String, args: Vec<String>, trust: u8) -> anyhow::Result<()> {
+fn run_mcp_add(
+    name: String,
+    command: String,
+    args: Vec<String>,
+    url: Option<String>,
+    trust: u8,
+) -> anyhow::Result<()> {
     if trust > 5 {
         anyhow::bail!("trust 必须在 0-5 之间");
+    }
+    if command.trim().is_empty() && url.is_none() {
+        anyhow::bail!("请用 --command 指定 stdio 上游，或用 --url 指定 HTTP 上游");
     }
     let mut cfg = load_config()?;
     let server = ServerConfig {
         command,
         args,
         env: BTreeMap::new(),
+        url,
         trust_level: trust,
         allow_tools: vec![],
         confirm_tools: vec![],
@@ -305,32 +324,51 @@ fn run_mcp_list() -> anyhow::Result<()> {
     println!("已配置的 MCP Server：");
     for (name, s) in &cfg.servers {
         let state = if s.enabled { "启用" } else { "禁用" };
-        println!(
-            "  {name}  [{state}]  trust={}  {} {}",
-            s.trust_level,
-            s.command,
-            s.args.join(" ")
-        );
+        let upstream = match &s.url {
+            Some(u) => format!("http {u}"),
+            None => format!("stdio {} {}", s.command, s.args.join(" ")),
+        };
+        println!("  {name}  [{state}]  trust={}  {upstream}", s.trust_level);
     }
     Ok(())
 }
 
 // ---------------- proxy start ----------------
 
+/// 上游传输规格。
+enum Upstream {
+    Stdio {
+        command: String,
+        args: Vec<String>,
+        env: BTreeMap<String, String>,
+    },
+    Http {
+        url: String,
+    },
+}
+
 fn run_proxy(
     server: Option<String>,
     command: Option<String>,
     args: Vec<String>,
+    url: Option<String>,
     client: String,
 ) -> anyhow::Result<()> {
     let cfg = load_config()?;
 
-    // 解析上游：--command 直接指定优先，否则从配置按 --server 查
-    let (cmd, cargs, cenv, server_name) = if let Some(cmd) = command {
+    // 解析上游：直接给的 --url / --command 优先，否则从配置按 --server 查
+    let (upstream, server_name) = if let Some(u) = url {
         (
-            cmd,
-            args,
-            BTreeMap::new(),
+            Upstream::Http { url: u },
+            server.unwrap_or_else(|| "upstream".into()),
+        )
+    } else if let Some(cmd) = command {
+        (
+            Upstream::Stdio {
+                command: cmd,
+                args,
+                env: BTreeMap::new(),
+            },
             server.unwrap_or_else(|| "upstream".into()),
         )
     } else if let Some(name) = server {
@@ -338,9 +376,17 @@ fn run_proxy(
             .servers
             .get(&name)
             .ok_or_else(|| anyhow::anyhow!("配置中找不到 server `{name}`，先用 mcp add 添加"))?;
-        (s.command.clone(), s.args.clone(), s.env.clone(), name)
+        let upstream = match &s.url {
+            Some(u) => Upstream::Http { url: u.clone() },
+            None => Upstream::Stdio {
+                command: s.command.clone(),
+                args: s.args.clone(),
+                env: s.env.clone(),
+            },
+        };
+        (upstream, name)
     } else {
-        anyhow::bail!("请用 --server <name> 选择已配置的 server，或用 --command 直接指定上游");
+        anyhow::bail!("请用 --server 选择已配置的 server，或用 --command / --url 直接指定上游");
     };
 
     // 确保审计目录存在，否则 JSONL 落盘会失败
@@ -361,13 +407,22 @@ fn run_proxy(
     let ctx = ProxyContext::new(client, server_name);
 
     // 所有状态信息走 stderr，绝不污染作为 MCP 通道的 stdout
-    eprintln!(
-        "[AgentShield] 代理启动，转发到上游：{cmd} {}",
-        cargs.join(" ")
-    );
+    let (transport, rx) = match &upstream {
+        Upstream::Stdio { command, args, env } => {
+            eprintln!(
+                "[AgentShield] 代理启动（stdio），上游：{command} {}",
+                args.join(" ")
+            );
+            connect_stdio(command, args, env)?
+        }
+        Upstream::Http { url } => {
+            eprintln!("[AgentShield] 代理启动（HTTP），上游：{url}");
+            connect_http(url)
+        }
+    };
     eprintln!("[AgentShield] 审计写入：{}", audit_path().display());
 
-    agentshield_proxy::run_stdio(&ctx, &dm, &approver, &audit, &cmd, &cargs, &cenv)?;
+    run(&ctx, &dm, &approver, &audit, transport, rx)?;
     eprintln!("[AgentShield] 代理已退出");
     Ok(())
 }

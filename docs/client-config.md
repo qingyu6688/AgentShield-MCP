@@ -81,6 +81,18 @@ agentshield proxy start --all
 1. 用桌面端确认（v0.3 起）。
 2. 把策略里需要确认的规则改成 `block` 或 `allow`，避免依赖交互（适合 CI / 无人值守）。
 
+## HTTP 上游
+
+上游若是 Streamable HTTP 的 MCP server，用 `--url` 注册（无需 `--command`）：
+
+```bash
+agentshield mcp add my-http --url http://127.0.0.1:3001/mcp
+agentshield proxy start --server my-http
+# 或直接：agentshield proxy start --url http://127.0.0.1:3001/mcp
+```
+
+客户端侧仍把 command 设为 `agentshield proxy start ...`（AgentShield 对客户端永远是 stdio）。
+
 ## Windows 注意
 
 如果上游是 npm 系命令（如 `npx ...`），在 `mcp add` 时 `--command` 要用 `npx.cmd`

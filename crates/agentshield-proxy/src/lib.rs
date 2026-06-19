@@ -1,18 +1,20 @@
 //! AgentShield MCP 代理。
 //!
-//! 提供 JSON-RPC 消息类型、工具调用分类（[`classify`]）以及 stdio 传输的
-//! 拦截转发主循环（[`gateway::run_stdio`]）。HTTP 传输见 docs/design/02-proxy.md。
+//! 提供 JSON-RPC 消息类型、工具调用分类（[`classify`]）以及传输无关的
+//! 拦截转发主循环（[`gateway::run`]）。上游支持 stdio 子进程与 Streamable HTTP。
 
 pub mod classify;
 pub mod gateway;
+pub mod http;
 pub mod jsonrpc;
 pub mod transport;
 
 use agentshield_core::{Decision, ToolCall};
 
 pub use classify::classify;
-pub use gateway::{run_stdio, ProxyContext};
+pub use gateway::{connect_http, connect_stdio, run, ProxyContext};
 pub use jsonrpc::{JsonRpcError, JsonRpcMessage};
+pub use transport::Transport;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProxyError {

@@ -18,3 +18,4 @@ chrono.workspace = true
 regex.workspace = true
 once_cell.workspace = true
 thiserror.workspace = true
+ureq.workspace = true

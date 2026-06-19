@@ -130,7 +130,7 @@ agentshield report generate --format markdown
 ## 支持范围
 
 - **AI 客户端**：Cursor、Codex CLI、Gemini CLI（任何走标准 MCP 的客户端）
-- **MCP 传输**：stdio（MVP）、SSE / Streamable HTTP（规划中）
+- **MCP 上游传输**：stdio 子进程、Streamable HTTP（POST + JSON/SSE）
 - **操作系统**：Windows、macOS、Linux
 - **审计存储**：SQLite + JSONL，可导出 JSON / Markdown / HTML
 

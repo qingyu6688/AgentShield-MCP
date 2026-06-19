@@ -1,23 +1,23 @@
 //! 拦截网关。MCP 消息穿过这里：tools/call 走决策，其余透传。
 //!
-//! 采用双线程的双向泵（用 `thread::scope` 让两端安全共享状态）：
-//! - 主线程：客户端 stdin → 决策 → 转发到上游 stdin / 或直接回错误给客户端
-//! - 子线程：上游 stdout → 客户端 stdout（原样回传），并按 id 回填审计结果
+//! 传输无关：上游可以是 stdio 子进程或 Streamable HTTP，统一抽象为
+//! [`Transport`]（发送）+ 一条 channel（接收上游消息）。
 //!
-//! 审计结果回填：放行的 tools/call 不在转发时立刻落审计，而是按 JSON-RPC id
-//! 记入 pending 表；回传线程看到同 id 的上游响应时，连同 result/error 一起写审计。
-//! 这样审计里能保留 AI 调用真正拿到的结果，而不只是“发起过”。
+//! - 主线程：客户端 stdin → 决策 → `transport.send` 转发 / 或直接回错误给客户端
+//! - 消费线程：channel（上游消息）→ 客户端 stdout（原样回传），并按 id 回填审计
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{self, BufRead, Write};
+use std::sync::mpsc::{self, Receiver};
 use std::sync::Mutex;
 use std::thread;
 
 use agentshield_core::{ids, Action, Decision, ToolCall};
 
 use crate::classify::classify;
+use crate::http::HttpTransport;
 use crate::jsonrpc::JsonRpcMessage;
-use crate::transport::{spawn_upstream, Upstream};
+use crate::transport::{StdioTransport, Transport};
 use crate::{ApprovalResult, Approver, AuditSink, DecisionMaker};
 
 /// 已转发、等待上游响应的调用：id 文本 → (调用, 决策)。
@@ -40,47 +40,49 @@ impl ProxyContext {
     }
 }
 
-/// 启动 stdio 代理：拉起上游 server，进入双向转发循环，直到任意一端关闭。
-#[allow(clippy::too_many_arguments)]
-pub fn run_stdio(
+/// 连接 stdio 上游：拉起子进程，返回传输与接收 channel。
+pub fn connect_stdio(
+    command: &str,
+    args: &[String],
+    env: &BTreeMap<String, String>,
+) -> io::Result<(Box<dyn Transport>, Receiver<String>)> {
+    let (tx, rx) = mpsc::channel();
+    let transport = StdioTransport::spawn(command, args, env, tx)?;
+    Ok((Box::new(transport), rx))
+}
+
+/// 连接 Streamable HTTP 上游。
+pub fn connect_http(url: &str) -> (Box<dyn Transport>, Receiver<String>) {
+    let (tx, rx) = mpsc::channel();
+    (Box::new(HttpTransport::new(url, tx)), rx)
+}
+
+/// 进入双向转发循环，直到客户端关闭。
+pub fn run(
     ctx: &ProxyContext,
     dm: &dyn DecisionMaker,
     approver: &dyn Approver,
     audit: &dyn AuditSink,
-    command: &str,
-    args: &[String],
-    env: &std::collections::BTreeMap<String, String>,
+    mut transport: Box<dyn Transport>,
+    rx: Receiver<String>,
 ) -> io::Result<()> {
-    let Upstream {
-        mut child,
-        stdin: mut upstream_in,
-        stdout: mut upstream_out,
-    } = spawn_upstream(command, args, env)?;
-
-    // 客户端 stdout 被两个写入方共享：主线程（拦截响应）与回传线程（上游响应）。
+    // 客户端 stdout 被主线程（拦截响应）与消费线程（上游响应）共享。
     let client_out = Mutex::new(io::stdout());
-    // 已转发、待回填结果的 tools/call。
     let pending: Mutex<PendingMap> = Mutex::new(HashMap::new());
 
-    let loop_result = thread::scope(|s| -> io::Result<()> {
-        // 回传线程：上游 → 客户端，原样转发，并按 id 回填审计。
+    thread::scope(|s| -> io::Result<()> {
         let co = &client_out;
         let pend = &pending;
+        let aud = audit;
+        // 消费线程：上游消息 → 客户端 + 回填审计
         s.spawn(move || {
-            let mut line = String::new();
-            loop {
-                line.clear();
-                match upstream_out.read_line(&mut line) {
-                    Ok(0) | Err(_) => break, // 上游关闭或出错
-                    Ok(_) => {
-                        // 先原样回传（保持协议字节不变、降低延迟），再回填审计
-                        if let Ok(mut w) = co.lock() {
-                            let _ = w.write_all(line.as_bytes());
-                            let _ = w.flush();
-                        }
-                        backfill(&line, pend, audit);
-                    }
+            for line in rx.iter() {
+                if let Ok(mut w) = co.lock() {
+                    let _ = w.write_all(line.as_bytes());
+                    let _ = w.write_all(b"\n");
+                    let _ = w.flush();
                 }
+                backfill(&line, pend, aud);
             }
         });
 
@@ -107,39 +109,34 @@ pub fn run_stdio(
                         approver,
                         audit,
                         &mut *co,
-                        &mut upstream_in,
+                        transport.as_mut(),
                         &pending,
                     )?;
                     drop(co);
                     if stop {
-                        break; // 上游已断
+                        break;
                     }
                 }
             }
         }
 
-        // 客户端已断开：关闭上游 stdin，通知它收尾并 flush，
-        // 而不是直接 kill——否则上游尚未回传的响应会丢失。
-        drop(upstream_in);
+        // 关闭上游并释放 channel 发送端，消费线程随之结束（scope 会 join）
+        transport.close();
         Ok(())
-        // scope 结束时自动 join 回传线程，确保剩余响应都回填完
-    });
+    })?;
 
-    let _ = child.wait(); // 回收子进程
-
-    // 兜底：上游没有响应的 pending 调用（如上游中途崩溃），按无结果补记审计。
+    // 兜底：上游没有响应的 pending 调用，按无结果补记审计。
     if let Ok(map) = pending.into_inner() {
         for (_id, (call, decision)) in map {
             audit.record(&call, &decision, None);
         }
     }
-
-    loop_result
+    Ok(())
 }
 
 /// 处理客户端发来的一行消息。
 ///
-/// 返回 `Ok(true)` 表示上游已不可写、应结束；`Ok(false)` 表示正常继续。
+/// 返回 `Ok(true)` 表示上游已不可用、应结束；`Ok(false)` 表示正常继续。
 #[allow(clippy::too_many_arguments)]
 pub fn handle_line(
     line: &str,
@@ -148,17 +145,17 @@ pub fn handle_line(
     approver: &dyn Approver,
     audit: &dyn AuditSink,
     client_out: &mut dyn Write,
-    upstream_in: &mut dyn Write,
+    transport: &mut dyn Transport,
     pending: &Mutex<PendingMap>,
 ) -> io::Result<bool> {
     let msg: JsonRpcMessage = match serde_json::from_str(line) {
         Ok(m) => m,
         // 解析不了的消息不擅自丢弃，原样透传给上游，保持协议健壮
-        Err(_) => return forward(line, upstream_in),
+        Err(_) => return forward(line, transport),
     };
 
     if !msg.is_tools_call() {
-        return forward(line, upstream_in);
+        return forward(line, transport);
     }
 
     // 解析 tools/call 的 name 与 arguments
@@ -177,14 +174,13 @@ pub fn handle_line(
         arguments,
     );
     let decision = dm.decide(&call);
-    // tools/call 是请求，正常都带 id；缺 id 时无法关联响应，只能立即记审计
     let id_key = msg.id.as_ref().map(|v| v.to_string());
 
     match decision.action {
         // 放行：转发后等响应回填，不在此刻落审计
         Action::Allow | Action::Log | Action::Sandbox => {
             defer_or_record(pending, audit, id_key, call, decision);
-            forward(line, upstream_in)
+            forward(line, transport)
         }
         Action::Block => {
             audit.record(&call, &decision, None);
@@ -199,7 +195,7 @@ pub fn handle_line(
             );
             if allowed {
                 defer_or_record(pending, audit, id_key, call, decision);
-                forward(line, upstream_in)
+                forward(line, transport)
             } else {
                 audit.record(&call, &decision, None);
                 respond_blocked(client_out, msg.id, &decision.reason)?;
@@ -229,7 +225,7 @@ fn defer_or_record(
     }
 }
 
-/// 回传线程：看到上游响应时，按 id 取出对应调用并连同结果写审计。
+/// 回填：看到上游响应时，按 id 取出对应调用并连同结果写审计。
 fn backfill(line: &str, pending: &Mutex<PendingMap>, audit: &dyn AuditSink) {
     let msg: JsonRpcMessage = match serde_json::from_str(line) {
         Ok(m) => m,
@@ -260,11 +256,14 @@ fn extract_result(msg: &JsonRpcMessage) -> Option<serde_json::Value> {
     None
 }
 
-/// 把原始行原样转发给上游。返回 `Ok(true)` 表示写入失败（上游断开）。
-fn forward(line: &str, upstream_in: &mut dyn Write) -> io::Result<bool> {
-    match writeln!(upstream_in, "{line}").and_then(|_| upstream_in.flush()) {
+/// 转发给上游。返回 `Ok(true)` 表示发送失败（上游断开）。
+fn forward(line: &str, transport: &mut dyn Transport) -> io::Result<bool> {
+    match transport.send(line) {
         Ok(()) => Ok(false),
-        Err(_) => Ok(true),
+        Err(e) => {
+            eprintln!("[AgentShield] 转发到上游失败：{e}");
+            Ok(true)
+        }
     }
 }
 
@@ -286,6 +285,19 @@ mod tests {
     use super::*;
     use agentshield_core::{RiskAssessment, RiskLevel};
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// 记录被转发到上游的消息的假传输。
+    #[derive(Default)]
+    struct MockTransport {
+        sent: Vec<String>,
+    }
+    impl Transport for MockTransport {
+        fn send(&mut self, line: &str) -> io::Result<()> {
+            self.sent.push(line.to_string());
+            Ok(())
+        }
+        fn close(&mut self) {}
+    }
 
     struct FixedDecision(Action);
     impl DecisionMaker for FixedDecision {
@@ -317,7 +329,6 @@ mod tests {
         }
     }
 
-    /// 记录审计调用次数以及最后一次是否带结果。
     struct RecordingAudit {
         count: AtomicUsize,
         last_with_result: Mutex<Option<bool>>,
@@ -360,7 +371,7 @@ mod tests {
     #[test]
     fn allow_forwards_and_defers_audit() {
         let mut client_out = Vec::new();
-        let mut upstream = Vec::new();
+        let mut tp = MockTransport::default();
         let audit = RecordingAudit::new();
         let pend = pending();
         handle_line(
@@ -370,12 +381,11 @@ mod tests {
             &AlwaysDeny,
             &audit,
             &mut client_out,
-            &mut upstream,
+            &mut tp,
             &pend,
         )
         .unwrap();
-        // 放行：转发到上游、不直接回客户端、审计延迟到响应回填
-        assert!(!upstream.is_empty());
+        assert_eq!(tp.sent.len(), 1);
         assert!(client_out.is_empty());
         assert_eq!(audit.count(), 0);
         assert_eq!(pend.lock().unwrap().len(), 1);
@@ -384,7 +394,7 @@ mod tests {
     #[test]
     fn result_is_backfilled_on_response() {
         let mut client_out = Vec::new();
-        let mut upstream = Vec::new();
+        let mut tp = MockTransport::default();
         let audit = RecordingAudit::new();
         let pend = pending();
         handle_line(
@@ -394,32 +404,33 @@ mod tests {
             &AlwaysDeny,
             &audit,
             &mut client_out,
-            &mut upstream,
+            &mut tp,
             &pend,
         )
         .unwrap();
-        // 上游返回同 id 的结果
         let resp = r#"{"jsonrpc":"2.0","id":1,"result":{"content":"ok"}}"#;
         backfill(resp, &pend, &audit);
-        assert_eq!(pend.lock().unwrap().len(), 0); // 已取出
+        assert_eq!(pend.lock().unwrap().len(), 0);
         assert_eq!(audit.count(), 1);
-        assert_eq!(audit.last_with_result(), Some(true)); // 带结果
+        assert_eq!(audit.last_with_result(), Some(true));
     }
 
     #[test]
     fn unrelated_response_does_not_backfill() {
         let audit = RecordingAudit::new();
         let pend = pending();
-        // pending 里没有 id=2
-        let resp = r#"{"jsonrpc":"2.0","id":2,"result":{"x":1}}"#;
-        backfill(resp, &pend, &audit);
+        backfill(
+            r#"{"jsonrpc":"2.0","id":2,"result":{"x":1}}"#,
+            &pend,
+            &audit,
+        );
         assert_eq!(audit.count(), 0);
     }
 
     #[test]
     fn block_responds_error_and_does_not_forward() {
         let mut client_out = Vec::new();
-        let mut upstream = Vec::new();
+        let mut tp = MockTransport::default();
         let audit = RecordingAudit::new();
         let pend = pending();
         handle_line(
@@ -429,21 +440,21 @@ mod tests {
             &AlwaysDeny,
             &audit,
             &mut client_out,
-            &mut upstream,
+            &mut tp,
             &pend,
         )
         .unwrap();
-        assert!(upstream.is_empty());
+        assert!(tp.sent.is_empty());
         let out = String::from_utf8(client_out).unwrap();
         assert!(out.contains("blocked by AgentShield"));
-        assert_eq!(audit.count(), 1); // 阻止立即记审计
+        assert_eq!(audit.count(), 1);
         assert!(pend.lock().unwrap().is_empty());
     }
 
     #[test]
     fn confirm_denied_blocks() {
         let mut client_out = Vec::new();
-        let mut upstream = Vec::new();
+        let mut tp = MockTransport::default();
         let audit = RecordingAudit::new();
         let pend = pending();
         handle_line(
@@ -453,11 +464,11 @@ mod tests {
             &AlwaysDeny,
             &audit,
             &mut client_out,
-            &mut upstream,
+            &mut tp,
             &pend,
         )
         .unwrap();
-        assert!(upstream.is_empty());
+        assert!(tp.sent.is_empty());
         assert!(String::from_utf8(client_out).unwrap().contains("blocked"));
         assert_eq!(audit.count(), 1);
     }
@@ -465,7 +476,7 @@ mod tests {
     #[test]
     fn confirm_allowed_forwards_and_defers() {
         let mut client_out = Vec::new();
-        let mut upstream = Vec::new();
+        let mut tp = MockTransport::default();
         let audit = RecordingAudit::new();
         let pend = pending();
         handle_line(
@@ -475,11 +486,11 @@ mod tests {
             &AlwaysAllow,
             &audit,
             &mut client_out,
-            &mut upstream,
+            &mut tp,
             &pend,
         )
         .unwrap();
-        assert!(!upstream.is_empty());
+        assert_eq!(tp.sent.len(), 1);
         assert!(client_out.is_empty());
         assert_eq!(audit.count(), 0);
         assert_eq!(pend.lock().unwrap().len(), 1);
@@ -488,22 +499,21 @@ mod tests {
     #[test]
     fn non_tools_call_is_forwarded() {
         let mut client_out = Vec::new();
-        let mut upstream = Vec::new();
+        let mut tp = MockTransport::default();
         let audit = RecordingAudit::new();
         let pend = pending();
-        let list = r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#;
         handle_line(
-            list,
+            r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
             &ctx(),
-            &FixedDecision(Action::Block), // 即使决策是 block，非 tools/call 也应透传
+            &FixedDecision(Action::Block),
             &AlwaysDeny,
             &audit,
             &mut client_out,
-            &mut upstream,
+            &mut tp,
             &pend,
         )
         .unwrap();
-        assert!(!upstream.is_empty());
+        assert_eq!(tp.sent.len(), 1);
         assert!(client_out.is_empty());
         assert_eq!(audit.count(), 0);
         assert!(pend.lock().unwrap().is_empty());

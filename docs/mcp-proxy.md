@@ -63,23 +63,27 @@ Proxy 不可能认识每个 server 的每个工具，因此用一套可配置的
 
 映射规则可在 `config.yaml` 里扩展，未匹配到的归为 `mcp.tool_call`（仍会评分，只是维度较粗）。
 
-## 5. 传输模式
+## 5. 上游传输模式
 
-通过 `Transport` trait 抽象：
+客户端侧 AgentShield 始终是 stdio MCP server；对真实上游通过 `Transport` trait 抽象，
+统一用一条 channel 把「上游 → 客户端」的消息回传给 gateway。
 
 ```rust
-pub trait Transport {
-    async fn recv(&mut self) -> Result<JsonRpcMessage>;
-    async fn send(&mut self, msg: JsonRpcMessage) -> Result<()>;
+pub trait Transport: Send {
+    fn send(&mut self, line: &str) -> std::io::Result<()>; // 客户端 → 上游
+    fn close(&mut self);                                    // 收尾，释放接收端
 }
 ```
 
 | 模式 | 状态 | 说明 |
 |---|---|---|
-| stdio | MVP（P0） | 子进程方式拉起真实 server，标准输入输出对接 |
-| SSE / Streamable HTTP | 规划（P1） | 面向 HTTP 类 MCP server |
+| stdio | 已实现 | 子进程方式拉起真实 server，对接其标准输入输出 |
+| Streamable HTTP | 已实现 | POST 发消息；响应为 `application/json` 或 `text/event-stream`（SSE）；自动捕获并复用 `Mcp-Session-Id` |
 
-新增传输只需实现 `Transport`，上层逻辑不变。
+用 `--command` 走 stdio，用 `--url` 走 HTTP。新增传输只需实现 `Transport`，gateway 逻辑不变。
+
+> HTTP 限制（MVP）：目前仅通过 POST 响应接收上游消息，未单独维持 GET SSE 长连接，
+> 因此上游主动发起的请求（如 sampling）暂不支持。
 
 ## 6. 多 Server 聚合
 

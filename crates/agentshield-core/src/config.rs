@@ -24,11 +24,16 @@ pub struct Config {
 /// 单个 MCP server 的配置与权限。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
+    /// stdio 传输：上游命令。HTTP 传输时可留空。
+    #[serde(default)]
     pub command: String,
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+    /// Streamable HTTP 上游地址；设置后走 HTTP 传输，否则走 stdio。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
     /// 权限等级 0-5，见 docs/policy.md
     #[serde(default = "default_trust")]
     pub trust_level: u8,
@@ -98,9 +103,10 @@ impl Config {
             return Err(CoreError::ConfigInvalid("version 不能为 0".into()));
         }
         for (name, s) in &self.servers {
-            if s.command.trim().is_empty() {
+            // stdio 需要 command，HTTP 需要 url，二者至少有其一
+            if s.command.trim().is_empty() && s.url.is_none() {
                 return Err(CoreError::ConfigInvalid(format!(
-                    "server `{name}` 的 command 不能为空"
+                    "server `{name}` 必须配置 command（stdio）或 url（http）"
                 )));
             }
             if s.trust_level > 5 {
