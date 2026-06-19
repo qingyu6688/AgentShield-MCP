@@ -28,6 +28,12 @@
 
 出现在 `agentshield proxy start` 所在的终端。如果客户端在后台拉起 proxy（你看不到那个终端），用桌面端确认（v0.3 起），或者把策略改成不依赖交互。
 
+## 选了「始终允许 / 永久拉黑」会记住吗？
+
+会。结果写入 `.agentshield/decisions.json`，按 `server + 工具 + 规范化目标` 匹配。
+下次同一操作不再弹确认，由决策器直接放行或拦截，且**记忆优先于策略**。
+用 `agentshield memory list` 查看，文件可手工编辑或删除条目。
+
 ## 支持哪些 AI 客户端？
 
 任何走标准 MCP 协议的客户端：Cursor、Codex CLI、Gemini CLI 等。接入方式见 [client-config.md](client-config.md)。

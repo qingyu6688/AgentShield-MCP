@@ -13,6 +13,9 @@
   result/error 一并写入审计；上游无响应时兜底补记
 - 审计双写：JSONL（崩溃安全）+ SQLite（结构化查询）
 - `report generate` 生成审计报告，支持 JSON / Markdown / HTML
+- 确认结果持久化：选「始终允许 / 永久拉黑」会写入 `.agentshield/decisions.json`，
+  下次同一操作（按 server + 工具 + 规范化目标匹配）直接放行 / 拦截，记忆优先于策略；
+  新增 `memory list` 查看
 - `init` / `mcp add` / `mcp list` / `audit list`（按等级过滤、读 SQLite）命令落地
 - 终端确认走控制台设备（`/dev/tty`、`CONIN$/CONOUT$`），不污染 MCP 通道
 - 内置风险规则与风险评分引擎
@@ -22,8 +25,8 @@
 ### 待办
 
 - 审计按时间范围 / server 维度查询
-- 确认结果的白/黑名单持久化
 - MCP SSE / Streamable HTTP 传输
+- Tauri 桌面端
 
 ## [0.0.0] - 2026-06-19
 

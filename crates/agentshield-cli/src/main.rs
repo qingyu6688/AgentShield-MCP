@@ -1,10 +1,14 @@
 //! AgentShield MCP 命令行入口。
 
 mod approver;
+mod memory;
 mod wiring;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use memory::DecisionMemory;
 
 use agentshield_audit::{EventQuery, Format, Report, ReportMeta, SqliteStore};
 use agentshield_core::{ids, Config, ServerConfig};
@@ -30,6 +34,9 @@ fn audit_path() -> PathBuf {
 }
 fn audit_db_path() -> PathBuf {
     Path::new(DIR).join("audit.db")
+}
+fn decisions_path() -> PathBuf {
+    Path::new(DIR).join("decisions.json")
 }
 
 #[derive(Parser)]
@@ -66,6 +73,11 @@ enum Command {
     Report {
         #[command(subcommand)]
         action: ReportAction,
+    },
+    /// 查看确认记忆（始终允许 / 永久拉黑）
+    Memory {
+        #[command(subcommand)]
+        action: MemoryAction,
     },
     /// 测试策略规则会如何裁决一次调用
     PolicyTest {
@@ -145,6 +157,12 @@ enum ReportAction {
     },
 }
 
+#[derive(Subcommand)]
+enum MemoryAction {
+    /// 列出已记住的确认结果
+    List,
+}
+
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
@@ -178,6 +196,9 @@ fn main() -> anyhow::Result<()> {
         },
         Command::Report { action } => match action {
             ReportAction::Generate { format, output } => run_report_generate(&format, output)?,
+        },
+        Command::Memory { action } => match action {
+            MemoryAction::List => run_memory_list(),
         },
     }
     Ok(())
@@ -326,7 +347,9 @@ fn run_proxy(
     std::fs::create_dir_all(DIR)?;
 
     let policy = load_policy()?;
-    let dm = build_decision_maker(policy);
+    // 决策记忆在决策器与确认器之间共享：确认器写入，决策器读取
+    let memory = Arc::new(DecisionMemory::load(decisions_path()));
+    let dm = AppDecisionMaker::with_memory(policy, Arc::clone(&memory));
     let audit = DualAudit::new(audit_path(), audit_db_path())?;
     // 无 tty 时的兜底动作由配置 approval.on_timeout 决定，默认拒绝
     let fallback = if cfg.approval.on_timeout.eq_ignore_ascii_case("allow") {
@@ -334,7 +357,7 @@ fn run_proxy(
     } else {
         FallbackAction::Deny
     };
-    let approver = CliApprover::new(fallback);
+    let approver = CliApprover::with_memory(fallback, Arc::clone(&memory));
     let ctx = ProxyContext::new(client, server_name);
 
     // 所有状态信息走 stderr，绝不污染作为 MCP 通道的 stdout
@@ -419,6 +442,29 @@ fn run_report_generate(format: &str, output: Option<PathBuf>) -> anyhow::Result<
 /// 当前本地时间，形如 2026-06-19 22:31。
 fn now_string() -> String {
     chrono::Local::now().format("%Y-%m-%d %H:%M").to_string()
+}
+
+// ---------------- memory list ----------------
+
+fn run_memory_list() {
+    let mem = DecisionMemory::load(decisions_path());
+    let (allow, block) = mem.entries();
+    if allow.is_empty() && block.is_empty() {
+        println!("暂无确认记忆（{}）", decisions_path().display());
+        return;
+    }
+    if !allow.is_empty() {
+        println!("始终允许（{} 条）：", allow.len());
+        for e in &allow {
+            println!("  {} / {} → {}", e.server, e.tool, e.target);
+        }
+    }
+    if !block.is_empty() {
+        println!("永久拉黑（{} 条）：", block.len());
+        for e in &block {
+            println!("  {} / {} → {}", e.server, e.tool, e.target);
+        }
+    }
 }
 
 // ---------------- demo / policy test ----------------
