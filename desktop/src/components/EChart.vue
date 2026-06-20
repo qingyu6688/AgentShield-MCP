@@ -4,13 +4,18 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, watch } from "vue";
-import * as echarts from "echarts";
+import { PieChart } from "echarts/charts";
+import { LegendComponent, TooltipComponent } from "echarts/components";
+import { init, use, type ECharts, type EChartsOption } from "echarts/core";
+import { CanvasRenderer } from "echarts/renderers";
 
-const props = defineProps<{ option: echarts.EChartsOption; height?: string }>();
+use([CanvasRenderer, LegendComponent, PieChart, TooltipComponent]);
+
+const props = defineProps<{ option: EChartsOption; height?: string }>();
 const height = props.height ?? "320px";
 
 const el = ref<HTMLDivElement>();
-let chart: echarts.ECharts | null = null;
+let chart: ECharts | null = null;
 
 function render() {
   if (chart && props.option) {
@@ -22,7 +27,7 @@ function resize() {
 }
 
 onMounted(() => {
-  chart = echarts.init(el.value!);
+  chart = init(el.value!);
   render();
   window.addEventListener("resize", resize);
 });

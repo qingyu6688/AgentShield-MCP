@@ -17,7 +17,7 @@ agentshield-proxy/src/
 ├── lib.rs
 ├── jsonrpc.rs      # JsonRpcMessage 编解码
 ├── transport.rs    # Transport trait + stdio 实现
-├── transport_http.rs  # SSE/HTTP 实现（P1，规划）
+├── transport_http.rs  # Streamable HTTP / SSE 实现
 ├── upstream.rs     # 连接真实 server（拉子进程 / HTTP）
 ├── classify.rs     # event_type 推断 + target 提取
 ├── gateway.rs      # 拦截主循环、决策合成、转发
@@ -36,7 +36,7 @@ pub trait Transport: Send {
 
 - `StdioTransport`：MVP。读写当前进程的 stdin/stdout（面向客户端）。
 - `ChildStdioTransport`：把真实 server 作为子进程拉起，读写它的 stdin/stdout（面向上游）。
-- `HttpTransport`：P1，SSE / Streamable HTTP。
+- `HttpTransport`：Streamable HTTP / SSE。支持 JSON 或 SSE 格式的 POST 响应，并在上游可用时维持 GET SSE 事件流。
 
 新增传输只需实现 trait，gateway 逻辑不变。
 

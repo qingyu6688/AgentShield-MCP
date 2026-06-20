@@ -15,8 +15,8 @@ cargo --version
 ## 1. 构建
 
 ```bash
-git clone https://github.com/your-name/agentshield-mcp.git
-cd agentshield-mcp
+git clone https://github.com/qingyu6688/AgentShield-MCP.git
+cd AgentShield-MCP
 cargo build --release
 ```
 

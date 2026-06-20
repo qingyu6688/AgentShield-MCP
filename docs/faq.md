@@ -31,7 +31,7 @@
 ## 选了「始终允许 / 永久拉黑」会记住吗？
 
 会。结果写入 `.agentshield/decisions.json`，按 `server + 工具 + 规范化目标` 匹配。
-下次同一操作不再弹确认，由决策器直接放行或拦截，且**记忆优先于策略**。
+永久拉黑会直接拦截；始终允许只跳过确认类流程，不会覆盖明确的 `block` 策略。
 用 `agentshield memory list` 查看，文件可手工编辑或删除条目。
 
 ## 支持哪些 AI 客户端？
@@ -40,7 +40,7 @@
 
 ## 支持哪些 MCP Server？
 
-stdio 传输的 MCP server 都支持（MVP）。SSE / Streamable HTTP 在规划中。常见的 filesystem、github、shell 类 server 还做了工具名精确映射，评分更准。
+stdio 与 Streamable HTTP 上游都已支持。HTTP 上游的 POST 响应可处理 `application/json` 与 `text/event-stream`，会自动复用 `Mcp-Session-Id`；上游支持 GET SSE 时也会维持事件流。常见的 filesystem、github、shell 类 server 还做了工具名精确映射，评分更准。
 
 ## 为什么用 Rust？
 

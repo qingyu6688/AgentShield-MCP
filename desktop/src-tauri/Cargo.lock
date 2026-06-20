@@ -10,7 +10,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "agentshield-audit"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "agentshield-core",
  "chrono",
@@ -22,7 +22,7 @@ dependencies = [
 
 [[package]]
 name = "agentshield-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "once_cell",
@@ -36,7 +36,7 @@ dependencies = [
 
 [[package]]
 name = "agentshield-dashboard"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "agentshield-audit",
  "agentshield-core",
@@ -48,7 +48,7 @@ dependencies = [
 
 [[package]]
 name = "agentshield-desktop"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "agentshield-dashboard",
  "tauri",

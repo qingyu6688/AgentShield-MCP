@@ -14,12 +14,12 @@ members = [
 exclude = ["desktop/src-tauri"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.82"
 license = "MIT"
-repository = "https://github.com/your-name/agentshield-mcp"
-authors = ["AgentShield MCP Contributors"]
+repository = "https://github.com/qingyu6688/AgentShield-MCP"
+authors = ["qingyu6688 <2661462026@qq.com>"]
 
 # 工作区统一管理依赖版本，各 crate 用 { workspace = true } 引用
 [workspace.dependencies]

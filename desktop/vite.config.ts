@@ -14,6 +14,25 @@ export default defineConfig({
   },
   build: {
     outDir: "dist",
-    chunkSizeWarningLimit: 1500,
+    chunkSizeWarningLimit: 900,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) {
+            return undefined;
+          }
+          if (id.includes("node_modules/echarts")) {
+            return "echarts";
+          }
+          if (id.includes("node_modules/ant-design-vue") || id.includes("node_modules/@ant-design")) {
+            return "antd";
+          }
+          if (id.includes("node_modules/vue") || id.includes("node_modules/@vue")) {
+            return "vue";
+          }
+          return "vendor";
+        },
+      },
+    },
   },
 });

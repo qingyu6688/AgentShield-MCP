@@ -397,7 +397,7 @@ fn build_runtime(cfg: &Config) -> anyhow::Result<ProxyRuntime> {
     std::fs::create_dir_all(DIR)?;
     let policy = load_policy()?;
     let memory = Arc::new(DecisionMemory::load(decisions_path()));
-    let dm = AppDecisionMaker::with_memory(policy, Arc::clone(&memory));
+    let dm = AppDecisionMaker::with_memory(policy, cfg, Arc::clone(&memory));
     let audit = DualAudit::new(audit_path(), audit_db_path())?;
     let fallback = if cfg.approval.on_timeout.eq_ignore_ascii_case("allow") {
         FallbackAction::Allow

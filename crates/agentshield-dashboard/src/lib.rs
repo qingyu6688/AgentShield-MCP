@@ -4,7 +4,7 @@
 //! 审计 / 配置 / 决策记忆能力。实时事件由前端轮询 `/api/events` 实现
 //! （刷新间隔 ~1s）。结构上预留 Tauri：后续可由 Tauri 直接复用这些查询函数。
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 
@@ -20,16 +20,57 @@ pub struct DashboardPaths {
     pub decisions: PathBuf,
 }
 
+/// 已绑定好的仪表盘 HTTP 服务。
+pub struct DashboardServer {
+    server: Server,
+    url: String,
+}
+
+impl DashboardServer {
+    /// 返回可被浏览器或 Tauri 窗口访问的本地 URL。
+    pub fn url(&self) -> &str {
+        &self.url
+    }
+
+    /// 启动仪表盘服务循环（阻塞）。
+    pub fn run(self, web_dir: PathBuf, paths: DashboardPaths) -> anyhow::Result<()> {
+        run_dashboard_server(self.server, &self.url, web_dir, paths)
+    }
+}
+
+/// 绑定仪表盘服务地址，但先不进入请求处理循环。
+pub fn bind_dashboard(addr: &str) -> anyhow::Result<DashboardServer> {
+    let server =
+        Server::http(addr).map_err(|e| anyhow::anyhow!("启动仪表盘 HTTP 服务失败：{e}"))?;
+    let addr = server
+        .server_addr()
+        .to_ip()
+        .ok_or_else(|| anyhow::anyhow!("仪表盘必须绑定到 TCP 地址"))?;
+
+    Ok(DashboardServer {
+        server,
+        url: format!("http://{addr}"),
+    })
+}
+
 /// 启动仪表盘 HTTP 服务（阻塞）。
 pub fn run_dashboard(addr: &str, web_dir: PathBuf, paths: DashboardPaths) -> anyhow::Result<()> {
+    let server = bind_dashboard(addr)?;
+    server.run(web_dir, paths)
+}
+
+fn run_dashboard_server(
+    server: Server,
+    url: &str,
+    web_dir: PathBuf,
+    paths: DashboardPaths,
+) -> anyhow::Result<()> {
     // 确保数据目录存在：首次从空目录启动时也能建出空库，避免 API 报 500
     if let Some(dir) = paths.db.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
 
-    let server =
-        Server::http(addr).map_err(|e| anyhow::anyhow!("启动仪表盘 HTTP 服务失败：{e}"))?;
-    println!("AgentShield 仪表盘已启动：http://{addr}");
+    println!("AgentShield 仪表盘已启动：{url}");
     if web_dir.join("index.html").exists() {
         println!("前端目录：{}", web_dir.display());
     } else {
@@ -202,14 +243,10 @@ fn build_report(paths: &DashboardPaths, query: &str) -> anyhow::Result<String> {
 
 /// 托管前端静态文件，找不到且无扩展名时回落到 index.html（SPA）。
 fn serve_static(req: tiny_http::Request, path: &str, web_dir: &Path) {
-    let rel = path.trim_start_matches('/');
-    let mut file = web_dir.join(rel);
-    if rel.is_empty() || !file.exists() {
-        // SPA 回落
-        if !rel.contains('.') {
-            file = web_dir.join("index.html");
-        }
-    }
+    let Some(file) = static_file_path(path, web_dir) else {
+        let _ = req.respond(Response::from_string("Not Found").with_status_code(404));
+        return;
+    };
 
     match std::fs::read(&file) {
         Ok(bytes) => {
@@ -223,18 +260,46 @@ fn serve_static(req: tiny_http::Request, path: &str, web_dir: &Path) {
     }
 }
 
+fn static_file_path(path: &str, web_dir: &Path) -> Option<PathBuf> {
+    let rel = path.trim_start_matches('/');
+    let requested = if rel.is_empty() || !rel.contains('.') {
+        "index.html"
+    } else {
+        rel
+    };
+    if !is_safe_relative_path(requested) {
+        return None;
+    }
+
+    let candidate = web_dir.join(requested);
+    if !candidate.exists() {
+        return None;
+    }
+
+    let root = web_dir.canonicalize().ok()?;
+    let file = candidate.canonicalize().ok()?;
+    if file.starts_with(&root) {
+        Some(file)
+    } else {
+        None
+    }
+}
+
+fn is_safe_relative_path(path: &str) -> bool {
+    Path::new(path)
+        .components()
+        .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
+}
+
 fn json_response(status: u16, body: String) -> Response<std::io::Cursor<Vec<u8>>> {
     let ct = Header::from_bytes(
         &b"Content-Type"[..],
         &b"application/json; charset=utf-8"[..],
     )
     .unwrap();
-    // 本地开发时前端可能跑在不同端口，放开 CORS（仅本地使用）
-    let cors = Header::from_bytes(&b"Access-Control-Allow-Origin"[..], &b"*"[..]).unwrap();
     Response::from_string(body)
         .with_status_code(status)
         .with_header(ct)
-        .with_header(cors)
 }
 
 fn content_type(ext: &str) -> &'static str {
@@ -286,4 +351,33 @@ fn urldecode(s: &str) -> String {
 
 fn err_json(e: &anyhow::Error) -> String {
     json!({ "error": e.to_string() }).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_parent_dir_static_paths() {
+        assert!(!is_safe_relative_path("../Cargo.toml"));
+        assert!(!is_safe_relative_path("assets/../../Cargo.toml"));
+        assert!(is_safe_relative_path("assets/app.js"));
+    }
+
+    #[test]
+    fn static_path_stays_inside_web_dir() {
+        let root =
+            std::env::temp_dir().join(format!("agentshield-dashboard-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("assets")).unwrap();
+        std::fs::write(root.join("index.html"), "ok").unwrap();
+        std::fs::write(root.join("assets/app.js"), "ok").unwrap();
+
+        assert!(static_file_path("/", &root).is_some());
+        assert!(static_file_path("/assets/app.js", &root).is_some());
+        assert!(static_file_path("/missing.js", &root).is_none());
+        assert!(static_file_path("/../Cargo.toml", &root).is_none());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

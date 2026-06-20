@@ -1,22 +1,14 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "AgentShield",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "dev.agentshield.desktop",
   "build": {
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [
-      {
-        "label": "main",
-        "title": "AgentShield 监控面板",
-        "width": 1280,
-        "height": 820,
-        "url": "http://127.0.0.1:8787"
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }

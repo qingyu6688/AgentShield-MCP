@@ -55,8 +55,8 @@ AI 发起一次 `tools/call` → AgentShield 解析工具名和参数 → 策略
 
 ```bash
 # 1. 构建
-git clone https://github.com/your-name/agentshield-mcp.git
-cd agentshield-mcp
+git clone https://github.com/qingyu6688/AgentShield-MCP.git
+cd AgentShield-MCP
 cargo build --release
 
 # 2. 在当前项目生成配置（.agentshield/config.yaml、policy.yaml、audit.db）

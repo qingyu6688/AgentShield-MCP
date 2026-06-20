@@ -17,8 +17,8 @@ rustup component add rustfmt clippy
 ## 本地开发流程
 
 ```bash
-git clone https://github.com/your-name/agentshield-mcp.git
-cd agentshield-mcp
+git clone https://github.com/qingyu6688/AgentShield-MCP.git
+cd AgentShield-MCP
 cargo build
 cargo test
 ```

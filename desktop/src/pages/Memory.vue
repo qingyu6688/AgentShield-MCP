@@ -19,7 +19,7 @@
       </a-col>
     </a-row>
     <p class="muted" style="margin-top: 12px">
-      这些记忆由终端确认时选择「始终允许 / 永久拉黑」生成，优先于策略。可在 .agentshield/decisions.json 编辑。
+      这些记忆由终端确认时选择「始终允许 / 永久拉黑」生成；始终允许不会覆盖明确的阻断策略。可在 .agentshield/decisions.json 编辑。
     </p>
   </a-spin>
 </template>
