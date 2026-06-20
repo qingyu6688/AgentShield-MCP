@@ -22,6 +22,11 @@ pub struct DashboardPaths {
 
 /// 启动仪表盘 HTTP 服务（阻塞）。
 pub fn run_dashboard(addr: &str, web_dir: PathBuf, paths: DashboardPaths) -> anyhow::Result<()> {
+    // 确保数据目录存在：首次从空目录启动时也能建出空库，避免 API 报 500
+    if let Some(dir) = paths.db.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+
     let server =
         Server::http(addr).map_err(|e| anyhow::anyhow!("启动仪表盘 HTTP 服务失败：{e}"))?;
     println!("AgentShield 仪表盘已启动：http://{addr}");
