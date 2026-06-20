@@ -3,6 +3,7 @@
 //! 提供 JSON-RPC 消息类型、工具调用分类（[`classify`]）以及传输无关的
 //! 拦截转发主循环（[`gateway::run`]）。上游支持 stdio 子进程与 Streamable HTTP。
 
+pub mod aggregate;
 pub mod classify;
 pub mod gateway;
 pub mod http;
@@ -11,6 +12,7 @@ pub mod transport;
 
 use agentshield_core::{Decision, ToolCall};
 
+pub use aggregate::{run_aggregate, UpstreamConn};
 pub use classify::classify;
 pub use gateway::{connect_http, connect_stdio, run, ProxyContext};
 pub use jsonrpc::{JsonRpcError, JsonRpcMessage};

@@ -13,7 +13,10 @@ use memory::DecisionMemory;
 use agentshield_audit::{EventQuery, Format, Report, ReportMeta, SqliteStore};
 use agentshield_core::{ids, Config, ServerConfig};
 use agentshield_policy::PolicyEngine;
-use agentshield_proxy::{classify, connect_http, connect_stdio, run, DecisionMaker, ProxyContext};
+use agentshield_proxy::{
+    classify, connect_http, connect_stdio, run, run_aggregate, DecisionMaker, ProxyContext,
+    UpstreamConn,
+};
 use approver::{CliApprover, FallbackAction};
 use clap::{Parser, Subcommand};
 use wiring::{AppDecisionMaker, DualAudit};
@@ -132,6 +135,9 @@ enum ProxyAction {
         /// 直接指定 Streamable HTTP 上游地址
         #[arg(long)]
         url: Option<String>,
+        /// 聚合模式：把 config.yaml 里所有启用的 server 合并到一个入口
+        #[arg(long)]
+        all: bool,
         /// 客户端标识，仅用于审计展示
         #[arg(long, default_value = "AI Client")]
         client: String,
@@ -206,8 +212,9 @@ fn main() -> anyhow::Result<()> {
                 command,
                 args,
                 url,
+                all,
                 client,
-            } => run_proxy(server, command, args, url, client)?,
+            } => run_proxy(server, command, args, url, all, client)?,
         },
         Command::Audit { action } => match action {
             AuditAction::List {
@@ -362,13 +369,45 @@ enum Upstream {
     },
 }
 
+/// 代理运行时：决策器、审计、确认器（dm 与 approver 共享同一份决策记忆）。
+struct ProxyRuntime {
+    dm: AppDecisionMaker,
+    audit: DualAudit,
+    approver: CliApprover,
+}
+
+/// 构建代理运行时（策略 + 记忆 + 审计 + 确认器）。
+fn build_runtime(cfg: &Config) -> anyhow::Result<ProxyRuntime> {
+    std::fs::create_dir_all(DIR)?;
+    let policy = load_policy()?;
+    let memory = Arc::new(DecisionMemory::load(decisions_path()));
+    let dm = AppDecisionMaker::with_memory(policy, Arc::clone(&memory));
+    let audit = DualAudit::new(audit_path(), audit_db_path())?;
+    let fallback = if cfg.approval.on_timeout.eq_ignore_ascii_case("allow") {
+        FallbackAction::Allow
+    } else {
+        FallbackAction::Deny
+    };
+    let approver = CliApprover::with_memory(fallback, memory);
+    Ok(ProxyRuntime {
+        dm,
+        audit,
+        approver,
+    })
+}
+
 fn run_proxy(
     server: Option<String>,
     command: Option<String>,
     args: Vec<String>,
     url: Option<String>,
+    all: bool,
     client: String,
 ) -> anyhow::Result<()> {
+    if all {
+        return run_aggregate_proxy(client);
+    }
+
     let cfg = load_config()?;
 
     // 解析上游：直接给的 --url / --command 优先，否则从配置按 --server 查
@@ -404,21 +443,7 @@ fn run_proxy(
         anyhow::bail!("请用 --server 选择已配置的 server，或用 --command / --url 直接指定上游");
     };
 
-    // 确保审计目录存在，否则 JSONL 落盘会失败
-    std::fs::create_dir_all(DIR)?;
-
-    let policy = load_policy()?;
-    // 决策记忆在决策器与确认器之间共享：确认器写入，决策器读取
-    let memory = Arc::new(DecisionMemory::load(decisions_path()));
-    let dm = AppDecisionMaker::with_memory(policy, Arc::clone(&memory));
-    let audit = DualAudit::new(audit_path(), audit_db_path())?;
-    // 无 tty 时的兜底动作由配置 approval.on_timeout 决定，默认拒绝
-    let fallback = if cfg.approval.on_timeout.eq_ignore_ascii_case("allow") {
-        FallbackAction::Allow
-    } else {
-        FallbackAction::Deny
-    };
-    let approver = CliApprover::with_memory(fallback, Arc::clone(&memory));
+    let rt = build_runtime(&cfg)?;
     let ctx = ProxyContext::new(client, server_name);
 
     // 所有状态信息走 stderr，绝不污染作为 MCP 通道的 stdout
@@ -437,8 +462,52 @@ fn run_proxy(
     };
     eprintln!("[AgentShield] 审计写入：{}", audit_path().display());
 
-    run(&ctx, &dm, &approver, &audit, transport, rx)?;
+    run(&ctx, &rt.dm, &rt.approver, &rt.audit, transport, rx)?;
     eprintln!("[AgentShield] 代理已退出");
+    Ok(())
+}
+
+/// 聚合模式：把 config.yaml 中所有启用的 server 合并到一个入口。
+fn run_aggregate_proxy(client: String) -> anyhow::Result<()> {
+    let cfg = load_config()?;
+    let enabled: Vec<(String, agentshield_core::ServerConfig)> = cfg
+        .servers
+        .iter()
+        .filter(|(_, s)| s.enabled)
+        .map(|(n, s)| (n.clone(), s.clone()))
+        .collect();
+    if enabled.is_empty() {
+        anyhow::bail!("config.yaml 中没有启用的 server，先用 mcp add 添加");
+    }
+
+    let rt = build_runtime(&cfg)?;
+
+    eprintln!(
+        "[AgentShield] 聚合代理启动，合并 {} 个上游：",
+        enabled.len()
+    );
+    let mut conns = Vec::with_capacity(enabled.len());
+    for (name, s) in enabled {
+        let (transport, rx) = match &s.url {
+            Some(u) => {
+                eprintln!("  - {name}（HTTP）{u}");
+                connect_http(u)
+            }
+            None => {
+                eprintln!("  - {name}（stdio）{} {}", s.command, s.args.join(" "));
+                connect_stdio(&s.command, &s.args, &s.env)?
+            }
+        };
+        conns.push(UpstreamConn {
+            name,
+            transport,
+            rx,
+        });
+    }
+    eprintln!("[AgentShield] 审计写入：{}", audit_path().display());
+
+    run_aggregate(&client, &rt.dm, &rt.approver, &rt.audit, conns)?;
+    eprintln!("[AgentShield] 聚合代理已退出");
     Ok(())
 }
 

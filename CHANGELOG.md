@@ -21,6 +21,8 @@
 - HTTP 上游会话建立后维持 GET SSE 长连接，接收并透传上游主动发起的消息
   （sampling/elicitation 请求、进度与资源更新通知等）
 - 审计查询支持按 server、时间范围（`--since` / `--until`，接受日期或 RFC3339）过滤
+- 多 MCP Server 聚合（`proxy start --all`）：合并 `tools/list`（工具名加 `server__` 前缀）、
+  按前缀路由 `tools/call`、各上游启动时自动 prime initialize，拦截与审计照常
 - `init` / `mcp add` / `mcp list` / `audit list`（按等级过滤、读 SQLite）命令落地
 - 终端确认走控制台设备（`/dev/tty`、`CONIN$/CONOUT$`），不污染 MCP 通道
 - 内置风险规则与风险评分引擎
@@ -30,7 +32,6 @@
 ### 待办
 
 - Tauri 桌面端（实时事件流、风险看板、弹窗确认）
-- 多 MCP Server 聚合到单一入口
 
 ## [0.0.0] - 2026-06-19
 

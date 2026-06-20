@@ -23,7 +23,7 @@ use crate::transport::{StdioTransport, Transport};
 use crate::{ApprovalResult, Approver, AuditSink, DecisionMaker};
 
 /// 已转发、等待上游响应的调用：id 文本 → (调用, 决策)。
-type PendingMap = HashMap<String, (ToolCall, Decision)>;
+pub(crate) type PendingMap = HashMap<String, (ToolCall, Decision)>;
 
 /// 一次代理会话的上下文。
 pub struct ProxyContext {
@@ -248,7 +248,7 @@ fn defer_or_record(
 }
 
 /// 回填：看到上游响应时，按 id 取出对应调用并连同结果写审计。
-fn backfill(line: &str, pending: &Mutex<PendingMap>, audit: &dyn AuditSink) {
+pub(crate) fn backfill(line: &str, pending: &Mutex<PendingMap>, audit: &dyn AuditSink) {
     let msg: JsonRpcMessage = match serde_json::from_str(line) {
         Ok(m) => m,
         Err(_) => return,
@@ -290,7 +290,7 @@ fn forward(line: &str, transport: &mut dyn Transport) -> io::Result<bool> {
 }
 
 /// 向客户端回一条“被 AgentShield 阻止”的 JSON-RPC 错误响应。
-fn respond_blocked(
+pub(crate) fn respond_blocked(
     client_out: &mut dyn Write,
     id: Option<serde_json::Value>,
     reason: &str,
