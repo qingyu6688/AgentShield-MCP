@@ -4,13 +4,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use agentshield_audit::{AuditRecord, JsonlSink, SqliteStore};
-use agentshield_core::{Action, Decision, ToolCall};
+use agentshield_core::{Action, Decision, DecisionMemory, MemoryVerdict, ToolCall};
 use agentshield_policy::PolicyEngine;
 use agentshield_proxy::{AuditSink, DecisionMaker};
 use agentshield_risk::{Context, RiskEngine};
 use agentshield_rules::RuleRegistry;
-
-use crate::memory::{DecisionMemory, MemoryVerdict};
 
 /// 应用级决策器：规则命中参与风险计分，再由策略合成最终动作。
 /// 若用户此前对同一操作选过「始终允许 / 永久拉黑」，记忆优先于策略。

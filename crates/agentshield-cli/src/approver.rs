@@ -12,10 +12,8 @@ use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
 use std::sync::Arc;
 
-use agentshield_core::{Decision, ToolCall};
+use agentshield_core::{Decision, DecisionMemory, ToolCall};
 use agentshield_proxy::{ApprovalResult, Approver};
-
-use crate::memory::DecisionMemory;
 
 /// 无 tty 时的兜底动作。
 #[derive(Debug, Clone, Copy)]

@@ -5,9 +5,11 @@
 pub mod config;
 pub mod error;
 pub mod ids;
+pub mod memory;
 pub mod redact;
 pub mod types;
 
 pub use config::{ApprovalConfig, AuditConfig, Config, RiskWeights, ServerConfig};
 pub use error::CoreError;
+pub use memory::{DecisionMemory, MemoryEntry, MemoryVerdict};
 pub use types::{Action, Decision, EventType, RiskAssessment, RiskLevel, ToolCall};

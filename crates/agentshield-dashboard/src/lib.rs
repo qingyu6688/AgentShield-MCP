@@ -9,11 +9,9 @@ use std::sync::Arc;
 use std::thread;
 
 use agentshield_audit::{EventQuery, Format, Report, ReportMeta, SqliteStore};
-use agentshield_core::Config;
+use agentshield_core::{Config, DecisionMemory};
 use serde_json::json;
 use tiny_http::{Header, Response, Server};
-
-use crate::memory::DecisionMemory;
 
 /// 仪表盘要用到的文件路径。
 pub struct DashboardPaths {

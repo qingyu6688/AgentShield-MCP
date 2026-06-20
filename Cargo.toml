@@ -7,8 +7,11 @@ members = [
     "crates/agentshield-policy",
     "crates/agentshield-audit",
     "crates/agentshield-proxy",
+    "crates/agentshield-dashboard",
     "crates/agentshield-cli",
 ]
+# Tauri 外壳独立于工作区：避免 cargo build/test 拉起 Tauri 工具链
+exclude = ["desktop/src-tauri"]
 
 [workspace.package]
 version = "0.1.0"
@@ -26,6 +29,7 @@ agentshield-risk = { path = "crates/agentshield-risk" }
 agentshield-policy = { path = "crates/agentshield-policy" }
 agentshield-audit = { path = "crates/agentshield-audit" }
 agentshield-proxy = { path = "crates/agentshield-proxy" }
+agentshield-dashboard = { path = "crates/agentshield-dashboard" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

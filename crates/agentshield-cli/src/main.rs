@@ -1,20 +1,15 @@
 //! AgentShield MCP 命令行入口。
 
 mod approver;
-mod dashboard;
-mod memory;
 mod wiring;
-
-use dashboard::{run_dashboard, DashboardPaths};
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use memory::DecisionMemory;
-
 use agentshield_audit::{EventQuery, Format, Report, ReportMeta, SqliteStore};
-use agentshield_core::{ids, Config, ServerConfig};
+use agentshield_core::{ids, Config, DecisionMemory, ServerConfig};
+use agentshield_dashboard::{run_dashboard, DashboardPaths};
 use agentshield_policy::PolicyEngine;
 use agentshield_proxy::{
     classify, connect_http, connect_stdio, run, run_aggregate, DecisionMaker, ProxyContext,

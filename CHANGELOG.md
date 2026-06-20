@@ -27,6 +27,10 @@
   （总览 / 实时事件 / 审计日志 / MCP Server / 确认记忆 / 报告），技术栈
   Vue 3 + TS + Vite + Ant Design Vue + ECharts，结构预留 Tauri
 - `agentshield demo` 现在会把演示事件写入审计，便于随后用仪表盘 / 报告查看
+- 重构：`DecisionMemory` 下沉到 `agentshield-core`，仪表盘后端抽成独立 lib
+  `agentshield-dashboard`，供 CLI 与桌面外壳共用
+- Tauri 桌面外壳（`desktop/src-tauri`）：进程内启动仪表盘服务，用原生窗口加载，
+  逻辑零重写；独立于 Rust 工作区（`cargo` 默认不构建它）
 - `init` / `mcp add` / `mcp list` / `audit list`（按等级过滤、读 SQLite）命令落地
 - 终端确认走控制台设备（`/dev/tty`、`CONIN$/CONOUT$`），不污染 MCP 通道
 - 内置风险规则与风险评分引擎
@@ -35,8 +39,8 @@
 
 ### 待办
 
-- Tauri 桌面端外壳（包裹现有 Web 仪表盘）
 - 仪表盘内的待确认操作（Approvals）与弹窗确认（需代理↔面板双向通道）
+- 桌面外壳打包产物的图标与签名、自动随项目目录监听
 
 ## [0.0.0] - 2026-06-19
 

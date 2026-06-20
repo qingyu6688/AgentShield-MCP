@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use agentshield_core::ToolCall;
+use crate::ToolCall;
 use serde::{Deserialize, Serialize};
 
 /// 记忆裁决。
@@ -167,7 +167,7 @@ fn write_file(path: &Path, file: &MemoryFile) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentshield_core::EventType;
+    use crate::EventType;
     use chrono::Utc;
 
     fn call(server: &str, tool: &str, target: &str) -> ToolCall {

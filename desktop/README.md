@@ -42,3 +42,21 @@ agentshield dashboard            # 浏览器打开 http://127.0.0.1:8787
 ## 接口
 
 仪表盘后端提供：`/api/summary`、`/api/events`、`/api/servers`、`/api/memory`、`/api/report`。
+
+## Tauri 桌面外壳
+
+`src-tauri/` 是一个 Tauri v2 外壳：**不重写任何逻辑**，而是在应用进程内启动同一套
+`agentshield-dashboard` 服务（127.0.0.1:8787），再用原生窗口加载它。前端与浏览器访问完全一致。
+
+```bash
+cd desktop
+npm install                # 含 @tauri-apps/cli
+npm run build              # 先产出 dist（窗口加载的服务会托管它）
+npm run tauri:build        # 打包成安装包 / 可执行文件
+# 或开发：npm run tauri:dev
+```
+
+- 监控的项目目录默认取启动时的工作目录，可用环境变量 `AGENTSHIELD_HOME` 指定。
+- `src-tauri` 独立于 Rust 工作区（根 `Cargo.toml` 的 `exclude`），不会被普通 `cargo build` / `cargo test` 牵连。
+- 运行 Tauri 需要本机具备 Tauri 前置环境（Rust + 平台 WebView：Windows 为 WebView2）。
+- `icons/` 内为占位图标，正式发布可用 `npm run tauri icon <你的图.png>` 一键生成整套。

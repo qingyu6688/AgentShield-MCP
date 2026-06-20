@@ -26,6 +26,7 @@ version = "0.1.0"
 dependencies = [
  "agentshield-audit",
  "agentshield-core",
+ "agentshield-dashboard",
  "agentshield-policy",
  "agentshield-proxy",
  "agentshield-risk",
@@ -36,7 +37,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
- "tiny_http",
 ]
 
 [[package]]
@@ -51,6 +51,18 @@ dependencies = [
  "serde_yaml",
  "thiserror",
  "uuid",
+]
+
+[[package]]
+name = "agentshield-dashboard"
+version = "0.1.0"
+dependencies = [
+ "agentshield-audit",
+ "agentshield-core",
+ "anyhow",
+ "chrono",
+ "serde_json",
+ "tiny_http",
 ]
 
 [[package]]

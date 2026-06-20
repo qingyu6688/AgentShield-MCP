@@ -1,0 +1,17 @@
+[package]
+name = "agentshield-dashboard"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "AgentShield MCP 本地 Web 仪表盘后端（只读 API + 静态托管）"
+
+[dependencies]
+agentshield-core.workspace = true
+agentshield-audit.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+tiny_http.workspace = true
+anyhow.workspace = true

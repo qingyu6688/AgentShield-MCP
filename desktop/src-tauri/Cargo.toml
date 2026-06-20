@@ -1,0 +1,20 @@
+[package]
+name = "agentshield-desktop"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+description = "AgentShield 桌面外壳：用原生窗口包裹本地监控仪表盘"
+license = "MIT"
+
+# 本包独立于工作区（见根 Cargo.toml 的 exclude），避免普通 cargo build 拉起 Tauri 工具链。
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+agentshield-dashboard = { path = "../../crates/agentshield-dashboard" }
+
+[features]
+# 默认无自定义协议；前端由内置 dashboard 服务提供
+default = []
