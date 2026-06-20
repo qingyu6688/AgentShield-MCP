@@ -1,0 +1,39 @@
+:root {
+  --ash-bg: #f5f6f8;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--ash-bg);
+}
+
+.page-title {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0 0 16px;
+}
+
+.muted {
+  color: #8a8f99;
+}
+
+/* 风险等级标签的统一配色 */
+.lvl-low {
+  color: #389e0d;
+}
+.lvl-medium {
+  color: #d48806;
+}
+.lvl-high {
+  color: #d4380d;
+}
+.lvl-critical {
+  color: #cf1322;
+  font-weight: 600;
+}

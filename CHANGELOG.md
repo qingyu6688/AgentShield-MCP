@@ -23,6 +23,10 @@
 - 审计查询支持按 server、时间范围（`--since` / `--until`，接受日期或 RFC3339）过滤
 - 多 MCP Server 聚合（`proxy start --all`）：合并 `tools/list`（工具名加 `server__` 前缀）、
   按前缀路由 `tools/call`、各上游启动时自动 prime initialize，拦截与审计照常
+- Web 监控仪表盘：`agentshield dashboard` 提供本地只读 JSON API 并托管 Vue 前端
+  （总览 / 实时事件 / 审计日志 / MCP Server / 确认记忆 / 报告），技术栈
+  Vue 3 + TS + Vite + Ant Design Vue + ECharts，结构预留 Tauri
+- `agentshield demo` 现在会把演示事件写入审计，便于随后用仪表盘 / 报告查看
 - `init` / `mcp add` / `mcp list` / `audit list`（按等级过滤、读 SQLite）命令落地
 - 终端确认走控制台设备（`/dev/tty`、`CONIN$/CONOUT$`），不污染 MCP 通道
 - 内置风险规则与风险评分引擎
@@ -31,7 +35,8 @@
 
 ### 待办
 
-- Tauri 桌面端（实时事件流、风险看板、弹窗确认）
+- Tauri 桌面端外壳（包裹现有 Web 仪表盘）
+- 仪表盘内的待确认操作（Approvals）与弹窗确认（需代理↔面板双向通道）
 
 ## [0.0.0] - 2026-06-19
 

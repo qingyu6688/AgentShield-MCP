@@ -39,6 +39,7 @@ regex = "1"
 once_cell = "1"
 rusqlite = { version = "0.31", features = ["bundled"] }
 ureq = "2"
+tiny_http = "0.12"
 
 [profile.release]
 strip = true

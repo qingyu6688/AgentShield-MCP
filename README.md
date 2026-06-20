@@ -76,8 +76,11 @@ cargo build --release
 想先看效果，不接客户端：
 
 ```bash
-agentshield demo      # 一键演示危险操作拦截
+agentshield demo                 # 一键演示危险操作拦截（同时写入审计）
+agentshield dashboard            # 浏览器打开 http://127.0.0.1:8787 看可视化面板
 ```
+
+> 仪表盘前端需先在 `desktop/` 执行 `npm install && npm run build`，详见 [desktop/README.md](desktop/README.md)。
 
 完整步骤见 [docs/quick-start.md](docs/quick-start.md)。
 

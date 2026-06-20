@@ -1,8 +1,11 @@
 //! AgentShield MCP 命令行入口。
 
 mod approver;
+mod dashboard;
 mod memory;
 mod wiring;
+
+use dashboard::{run_dashboard, DashboardPaths};
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -81,6 +84,15 @@ enum Command {
     Memory {
         #[command(subcommand)]
         action: MemoryAction,
+    },
+    /// 启动本地 Web 仪表盘
+    Dashboard {
+        /// 监听地址
+        #[arg(long, default_value = "127.0.0.1:8787")]
+        addr: String,
+        /// 前端静态目录（构建产物）
+        #[arg(long, default_value = "desktop/dist")]
+        web_dir: PathBuf,
     },
     /// 测试策略规则会如何裁决一次调用
     PolicyTest {
@@ -231,6 +243,15 @@ fn main() -> anyhow::Result<()> {
         Command::Memory { action } => match action {
             MemoryAction::List => run_memory_list(),
         },
+        Command::Dashboard { addr, web_dir } => run_dashboard(
+            &addr,
+            web_dir,
+            DashboardPaths {
+                db: audit_db_path(),
+                config: config_path(),
+                decisions: decisions_path(),
+            },
+        )?,
     }
     Ok(())
 }
@@ -639,12 +660,19 @@ fn run_memory_list() {
 
 // ---------------- demo / policy test ----------------
 
-/// 一键演示：跑几条典型危险调用，展示完整决策链路。
+/// 一键演示：跑几条典型危险调用，展示完整决策链路，并写入审计便于用
+/// `agentshield dashboard` / `report` 查看。
 fn run_demo() -> anyhow::Result<()> {
+    use agentshield_proxy::AuditSink;
+
     let policy = PolicyEngine::from_yaml(DEFAULT_POLICY)
         .map_err(|e| anyhow::anyhow!("默认策略加载失败：{e}"))?;
     let dm = build_decision_maker(policy);
     let session = ids::new_session_id();
+
+    // 演示数据也落审计，便于随后在仪表盘 / 报告里查看
+    std::fs::create_dir_all(DIR)?;
+    let audit = DualAudit::new(audit_path(), audit_db_path())?;
 
     let cases = [
         (
@@ -683,6 +711,7 @@ fn run_demo() -> anyhow::Result<()> {
     for (i, (desc, server, tool, args)) in cases.iter().enumerate() {
         let call = classify(&session, "Demo CLI", server, tool, args.clone());
         let d = dm.decide(&call);
+        audit.record(&call, &d, None);
         let mark = match d.action {
             agentshield_core::Action::Block => "✗ 已阻止",
             agentshield_core::Action::Confirm => "⏸ 需要确认",
@@ -707,7 +736,7 @@ fn run_demo() -> anyhow::Result<()> {
         );
         println!("      决策 {:?} {mark}\n", d.action);
     }
-    println!("提示：接入客户端后用 `agentshield proxy start` 进行真实拦截。");
+    println!("提示：演示事件已写入审计，可用 `agentshield dashboard` 或 `agentshield report generate` 查看。");
     Ok(())
 }
 
