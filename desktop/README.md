@@ -59,4 +59,17 @@ npm run tauri:build        # 打包成安装包 / 可执行文件
 - 监控的项目目录默认取启动时的工作目录，可用环境变量 `AGENTSHIELD_HOME` 指定。
 - `src-tauri` 独立于 Rust 工作区（根 `Cargo.toml` 的 `exclude`），不会被普通 `cargo build` / `cargo test` 牵连。
 - 运行 Tauri 需要本机具备 Tauri 前置环境（Rust + 平台 WebView：Windows 为 WebView2）。
-- `icons/` 内为占位图标，正式发布可用 `npm run tauri icon <你的图.png>` 一键生成整套。
+- `icons/` 为占位图标，正式发布用 `npm run tauri icon <你的图.png>` 一键替换整套。
+
+### 打包产物（Windows 实测）
+
+`npm run tauri:build` 完成后产物在 `desktop/src-tauri/target/release/`：
+
+```text
+agentshield-desktop.exe              # 独立可执行
+bundle/msi/AgentShield_0.1.0_x64_en-US.msi
+bundle/nsis/AgentShield_0.1.0_x64-setup.exe
+```
+
+双击安装包安装后运行即可；应用会在所在目录的 `.agentshield/` 读取审计数据（或用
+`AGENTSHIELD_HOME` 指定项目目录）。macOS / Linux 在对应平台执行同样命令产出 `.dmg` / `.AppImage` 等。

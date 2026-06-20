@@ -31,6 +31,8 @@
   `agentshield-dashboard`，供 CLI 与桌面外壳共用
 - Tauri 桌面外壳（`desktop/src-tauri`）：进程内启动仪表盘服务，用原生窗口加载，
   逻辑零重写；独立于 Rust 工作区（`cargo` 默认不构建它）
+- 桌面应用已实测打包（Windows）：`npm run tauri:build` 产出 `agentshield-desktop.exe`
+  与 MSI / NSIS 安装包；启动后内置服务正常、前端正常加载
 - `init` / `mcp add` / `mcp list` / `audit list`（按等级过滤、读 SQLite）命令落地
 - 终端确认走控制台设备（`/dev/tty`、`CONIN$/CONOUT$`），不污染 MCP 通道
 - 内置风险规则与风险评分引擎
